@@ -90,7 +90,7 @@ def get_stats():
         "api_version": "v1.1-sakke-mode",
         "server_type": "Starter-7EUR"
     })
-
 if __name__ == "__main__":
-    # Render käyttää porttia 10000 oletuksena
-    app.run(host="0.0.0.0", port=10000)
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
