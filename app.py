@@ -2,8 +2,21 @@ from flask import Flask, request, jsonify
 import time
 from datetime import datetime
 import uuid
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
+# Sallitaan haut mistä tahansa (CORS), jotta botit ja konsoli-testit toimivat
+CORS(app)
+
+# Lisätään ovimies: Max 10 hakua sekunnissa per IP-osoite
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["10 per second"],
+    storage_uri="memory://"
+)
 
 # Metriikat Slush-demoa varten - Pysyvät muistissa 7e paketin ansiosta
 stats = {"total_queries": 0, "bot_queries": 0}
