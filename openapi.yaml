@@ -1,0 +1,71 @@
+openapi: 3.0.1
+info:
+  title: Zemlo Logistics API
+  version: '1.0'
+  description: >
+    Zemlo Lite provides open, no-auth logistics estimates (price, time, mode) for any origin and destination.
+    Designed for AI agents, LLMs and autonomous systems.
+servers:
+  - url: https://zemloai-api.onrender.com
+paths:
+  /quote:
+    post:
+      summary: Get shipping estimates
+      operationId: getQuote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+      responses:
+        '200':
+          description: Shipping options
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+components:
+  schemas:
+    QuoteRequest:
+      type: object
+      required:
+        - origin
+        - destination
+        - weight_kg
+      properties:
+        origin:
+          type: string
+          example: Helsinki, Finland
+        destination:
+          type: string
+          example: Tokyo, Japan
+        weight_kg:
+          type: number
+          example: 180
+        dimensions_cm:
+          type: object
+          properties:
+            length: { type: number, example: 120 }
+            width: { type: number, example: 60 }
+            height: { type: number, example: 40 }
+        description:
+          type: string
+          example: upright piano
+    QuoteResponse:
+      type: object
+      properties:
+        routes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, example: cheapest }
+              label: { type: string, example: Cheapest option }
+              mode: { type: string, example: sea+road }
+              estimated_price: { type: number, example: 1400 }
+              estimated_transit_days: { type: number, example: 42 }
+              reliability_score: { type: number, example: 0.85 }
+              notes:
+                type: array
+                items: { type: string }
