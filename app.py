@@ -1,3 +1,6 @@
+Tässä on päivitetty koodi, johon on lisätty test-bot-tunniste ja logiikka, joka lukee sen myös URL-parametreista. Näin voit testata botti-tunnistusta suoraan selaimella lisäämällä loppuun &ua=test-bot.
+
+Python
 from flask import Flask, request, jsonify
 import time
 import uuid
@@ -32,10 +35,20 @@ limiter = Limiter(
 # Sisäinen laskuri MVP-vaiheeseen
 stats = {"total_queries": 0, "bot_queries": 0}
 
-def is_bot(ua):
-    if not ua: return False
-    indicators = ['python', 'openai', 'claude', 'gpt', 'bot', 'curl', 'langchain', 'postman', 'gemini']
-    return any(ind in ua.lower() for ind in indicators)
+def is_bot(ua, url_params=None):
+    if not ua: ua = ""
+    # Lisätty 'test-bot' tunnisteeksi
+    indicators = ['python', 'openai', 'claude', 'gpt', 'bot', 'curl', 'langchain', 'postman', 'gemini', 'test-bot']
+    
+    # Tarkistus User-Agentista
+    ua_match = any(ind in ua.lower() for ind in indicators)
+    
+    # Tarkistus URL-parametreista (esim. ?ua=test-bot)
+    param_match = False
+    if url_params and url_params.get('ua'):
+        param_match = any(ind in str(url_params.get('ua')).lower() for ind in indicators)
+        
+    return ua_match or param_match
 
 def log_to_supabase_bg(ua, ip, params, duration):
     if not supabase: return
@@ -43,8 +56,11 @@ def log_to_supabase_bg(ua, ip, params, duration):
         # Haetaan sijaintitiedot IP-osoitteen perusteella
         geo = requests.get(f"http://ip-api.com/json/{ip}").json()
         
+        # Käytetään päivitettyä is_bot-logiikkaa
+        is_ai = is_bot(ua, params)
+        
         data = {
-            "caller_type": "AI/Bot" if is_bot(ua) else "Human",
+            "caller_type": "AI/Bot" if is_ai else "Human",
             "user_agent": ua,
             "country": geo.get("country", "Unknown"),
             "city": geo.get("city", "Unknown"),
@@ -71,13 +87,16 @@ def get_quote():
     ua = request.headers.get('User-Agent', '')
     ip = request.headers.get('x-forwarded-for', request.remote_addr).split(',')[0]
     
-    stats["total_queries"] += 1
-    if is_bot(ua): stats["bot_queries"] += 1
-
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
     else:
         data = request.args
+
+    # Päivitetty tunnistus
+    current_is_bot = is_bot(ua, data)
+    
+    stats["total_queries"] += 1
+    if current_is_bot: stats["bot_queries"] += 1
 
     origin = data.get('from', 'Helsinki')
     destination = data.get('to', 'Belgrade')
@@ -86,7 +105,7 @@ def get_quote():
     duration = int((time.time() - start_time) * 1000)
     if duration == 0: duration = 1 
 
-    # Tallennus taustalla (daemon=True varmistaa ettei pyyntö jää odottamaan)
+    # Tallennus taustalla
     log_thread = threading.Thread(
         target=log_to_supabase_bg, 
         args=(ua, ip, dict(data), duration),
@@ -106,8 +125,8 @@ def get_quote():
             }
         ],
         "metadata": {
-            "response_time_ms": duration, # YHTENÄISTETTY NIMI
-            "request_by": "Bot" if is_bot(ua) else "Human"
+            "response_time_ms": duration,
+            "request_by": "Bot" if current_is_bot else "Human"
         }
     })
 
