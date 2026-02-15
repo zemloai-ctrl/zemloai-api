@@ -21,6 +21,7 @@ if SUPABASE_URL and SUPABASE_KEY:
 else:
     supabase = None
 
+# Rajoitetaan kutsuja (Rate limiting)
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -28,6 +29,7 @@ limiter = Limiter(
     storage_uri="memory://"
 )
 
+# Sisäinen laskuri MVP-vaiheeseen
 stats = {"total_queries": 0, "bot_queries": 0}
 
 def is_bot(ua):
@@ -38,7 +40,7 @@ def is_bot(ua):
 def log_to_supabase_bg(ua, ip, params, duration):
     if not supabase: return
     try:
-        # Käytetään ip-api:n HTTPS-versiota (ChatGPT:n vinkki)
+        # Haetaan sijaintitiedot IP-osoitteen perusteella
         geo = requests.get(f"http://ip-api.com/json/{ip}").json()
         
         data = {
@@ -47,7 +49,7 @@ def log_to_supabase_bg(ua, ip, params, duration):
             "country": geo.get("country", "Unknown"),
             "city": geo.get("city", "Unknown"),
             "query_params": params, 
-            "response_time_ms": duration,
+            "response_time_ms": duration,  # Täsmää Supabaseen
             "status_code": 200
         }
         supabase.table("api_logs").insert(data).execute()
@@ -64,7 +66,7 @@ def home():
 
 @app.route('/api/v1/quote', methods=['GET', 'POST'])
 def get_quote():
-    start_time = time.time() # Aloitetaan ajanotto
+    start_time = time.time()
     
     ua = request.headers.get('User-Agent', '')
     ip = request.headers.get('x-forwarded-for', request.remote_addr).split(',')[0]
@@ -80,11 +82,11 @@ def get_quote():
     origin = data.get('from', 'Helsinki')
     destination = data.get('to', 'Belgrade')
     
-    # ChatGPT:n vinkki: Lasketaan kesto juuri ennen vastausta
+    # Lasketaan kesto millisekunneissa
     duration = int((time.time() - start_time) * 1000)
-    if duration == 0: duration = 1 # Jos on liian nopea, näytetään 1ms
+    if duration == 0: duration = 1 
 
-    # Taustaprosessi daemon-tilassa
+    # Tallennus taustalla (daemon=True varmistaa ettei pyyntö jää odottamaan)
     log_thread = threading.Thread(
         target=log_to_supabase_bg, 
         args=(ua, ip, dict(data), duration),
@@ -104,7 +106,7 @@ def get_quote():
             }
         ],
         "metadata": {
-            "latency_ms": duration,
+            "response_time_ms": duration, # YHTENÄISTETTY NIMI
             "request_by": "Bot" if is_bot(ua) else "Human"
         }
     })
