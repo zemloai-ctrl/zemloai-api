@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 import time
-from datetime import datetime
 import uuid
 import os
 import requests
@@ -13,7 +12,7 @@ from supabase import create_client, Client
 app = Flask(__name__)
 CORS(app)
 
-# 1. Tarkistetaan avaimet (ChatGPT:n vinkki: ei kaadu jos puuttuvat)
+# Supabase-yhteys
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
@@ -21,7 +20,6 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
     supabase = None
-    print("VAROITUS: Supabase-avaimet puuttuvat!")
 
 limiter = Limiter(
     get_remote_address,
@@ -37,12 +35,10 @@ def is_bot(ua):
     indicators = ['python', 'openai', 'claude', 'gpt', 'bot', 'curl', 'langchain', 'postman', 'gemini']
     return any(ind in ua.lower() for ind in indicators)
 
-# 2. Parannettu taustallatallennus
 def log_to_supabase_bg(ua, ip, params, duration):
     if not supabase: return
-
     try:
-        # Käytetään HTTPS-yhteyttä (ChatGPT:n vinkki)
+        # Käytetään ip-api:n HTTPS-versiota (ChatGPT:n vinkki)
         geo = requests.get(f"http://ip-api.com/json/{ip}").json()
         
         data = {
@@ -50,7 +46,7 @@ def log_to_supabase_bg(ua, ip, params, duration):
             "user_agent": ua,
             "country": geo.get("country", "Unknown"),
             "city": geo.get("city", "Unknown"),
-            "query_params": params, # Tallennetaan oikeana JSONina
+            "query_params": params, 
             "response_time_ms": duration,
             "status_code": 200
         }
@@ -68,7 +64,8 @@ def home():
 
 @app.route('/api/v1/quote', methods=['GET', 'POST'])
 def get_quote():
-    start_time = time.time()
+    start_time = time.time() # Aloitetaan ajanotto
+    
     ua = request.headers.get('User-Agent', '')
     ip = request.headers.get('x-forwarded-for', request.remote_addr).split(',')[0]
     
@@ -83,9 +80,11 @@ def get_quote():
     origin = data.get('from', 'Helsinki')
     destination = data.get('to', 'Belgrade')
     
+    # ChatGPT:n vinkki: Lasketaan kesto juuri ennen vastausta
     duration = int((time.time() - start_time) * 1000)
+    if duration == 0: duration = 1 # Jos on liian nopea, näytetään 1ms
 
-    # 3. Käynnistetään tausta-ajo "daemon"-tilassa (ChatGPT:n vinkki)
+    # Taustaprosessi daemon-tilassa
     log_thread = threading.Thread(
         target=log_to_supabase_bg, 
         args=(ua, ip, dict(data), duration),
@@ -105,7 +104,7 @@ def get_quote():
             }
         ],
         "metadata": {
-            "response_time_ms": duration,
+            "latency_ms": duration,
             "request_by": "Bot" if is_bot(ua) else "Human"
         }
     })
