@@ -1,6 +1,3 @@
-Tässä on päivitetty koodi, johon on lisätty test-bot-tunniste ja logiikka, joka lukee sen myös URL-parametreista. Näin voit testata botti-tunnistusta suoraan selaimella lisäämällä loppuun &ua=test-bot.
-
-Python
 from flask import Flask, request, jsonify
 import time
 import uuid
@@ -37,13 +34,11 @@ stats = {"total_queries": 0, "bot_queries": 0}
 
 def is_bot(ua, url_params=None):
     if not ua: ua = ""
-    # Lisätty 'test-bot' tunnisteeksi
+    # Tunnisteet boteille
     indicators = ['python', 'openai', 'claude', 'gpt', 'bot', 'curl', 'langchain', 'postman', 'gemini', 'test-bot']
     
-    # Tarkistus User-Agentista
     ua_match = any(ind in ua.lower() for ind in indicators)
     
-    # Tarkistus URL-parametreista (esim. ?ua=test-bot)
     param_match = False
     if url_params and url_params.get('ua'):
         param_match = any(ind in str(url_params.get('ua')).lower() for ind in indicators)
@@ -53,10 +48,7 @@ def is_bot(ua, url_params=None):
 def log_to_supabase_bg(ua, ip, params, duration):
     if not supabase: return
     try:
-        # Haetaan sijaintitiedot IP-osoitteen perusteella
         geo = requests.get(f"http://ip-api.com/json/{ip}").json()
-        
-        # Käytetään päivitettyä is_bot-logiikkaa
         is_ai = is_bot(ua, params)
         
         data = {
@@ -65,7 +57,7 @@ def log_to_supabase_bg(ua, ip, params, duration):
             "country": geo.get("country", "Unknown"),
             "city": geo.get("city", "Unknown"),
             "query_params": params, 
-            "response_time_ms": duration,  # Täsmää Supabaseen
+            "response_time_ms": duration,
             "status_code": 200
         }
         supabase.table("api_logs").insert(data).execute()
@@ -92,7 +84,6 @@ def get_quote():
     else:
         data = request.args
 
-    # Päivitetty tunnistus
     current_is_bot = is_bot(ua, data)
     
     stats["total_queries"] += 1
@@ -101,11 +92,9 @@ def get_quote():
     origin = data.get('from', 'Helsinki')
     destination = data.get('to', 'Belgrade')
     
-    # Lasketaan kesto millisekunneissa
     duration = int((time.time() - start_time) * 1000)
     if duration == 0: duration = 1 
 
-    # Tallennus taustalla
     log_thread = threading.Thread(
         target=log_to_supabase_bg, 
         args=(ua, ip, dict(data), duration),
