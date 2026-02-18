@@ -1,71 +1,62 @@
 openapi: 3.0.1
 info:
-  title: Zemlo Logistics API
-  version: '1.0'
+  title: Zemlo ZQP Reference Node
+  version: '1.0-beta'
   description: >
-    Zemlo Lite provides open, no-auth logistics estimates (price, time, mode) for any origin and destination.
-    Designed for AI agents, LLMs and autonomous systems.
+    Zemlo ZQP (Zemlo Quote Protocol) provides deterministic logistics price-range signals 
+    optimized for AI agents and autonomous systems. Active Beta Phase.
 servers:
-  - url: https://zemloai-api.onrender.com
+  - url: https://zemlo-engine.onrender.com
 paths:
-  /quote:
+  /v1/zemlo-ghost1:
     post:
-      summary: Get shipping estimates
-      operationId: getQuote
+      summary: Get ZQP Logistics Signal
+      operationId: getZqpSignal
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/QuoteRequest'
+              $ref: '#/components/schemas/ZqpRequest'
       responses:
         '200':
-          description: Shipping options
+          description: ZQP Logistics Signal Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QuoteResponse'
+                $ref: '#/components/schemas/ZqpResponse'
 components:
   schemas:
-    QuoteRequest:
+    ZqpRequest:
       type: object
       required:
-        - origin
-        - destination
-        - weight_kg
+        - from
+        - to
       properties:
-        origin:
+        from:
           type: string
-          example: Helsinki, Finland
-        destination:
+          example: Helsinki
+        to:
           type: string
-          example: Tokyo, Japan
-        weight_kg:
-          type: number
-          example: 180
-        dimensions_cm:
-          type: object
-          properties:
-            length: { type: number, example: 120 }
-            width: { type: number, example: 60 }
-            height: { type: number, example: 40 }
-        description:
+          example: Belgrade
+        bot_name:
           type: string
-          example: upright piano
-    QuoteResponse:
+          example: my-agent-01
+    ZqpResponse:
       type: object
       properties:
-        routes:
-          type: array
-          items:
-            type: object
-            properties:
-              id: { type: string, example: cheapest }
-              label: { type: string, example: Cheapest option }
-              mode: { type: string, example: sea+road }
-              estimated_price: { type: number, example: 1400 }
-              estimated_transit_days: { type: number, example: 42 }
-              reliability_score: { type: number, example: 0.85 }
-              notes:
-                type: array
-                items: { type: string }
+        protocol:
+          type: string
+          example: ZQP/1.0-beta
+        estimate:
+          type: object
+          properties:
+            min:
+              type: number
+              example: 420
+            max:
+              type: number
+              example: 610
+            currency:
+              type: string
+              example: EUR
