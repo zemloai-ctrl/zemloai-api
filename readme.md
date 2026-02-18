@@ -1,79 +1,56 @@
-🚀 Zemlo AI: The Logistics Signal Node
+# 🚀 Zemlo AI: The Logistics Signal Node (Beta)
 
-Zemlo is a "clarification machine" for global logistics.
-Providing a deterministic price-range signal for autonomous decision systems.
+> **Zemlo is a "clarification machine" for global logistics.**
+> Providing a dynamic price-range signal optimized for AI agents and autonomous systems.
 
-Zemlo AI operates the primary reference node for the Zemlo Quote Protocol (ZQP), an open specification designed for AI-Agent optimized logistics infrastructure.
+Zemlo AI operates as the primary development node for the **Zemlo Quote Protocol (ZQP)**. We are currently in an active **Beta Phase**, mapping the first global logistics signals.
 
-🛰️ Zemlo Quote Protocol (ZQP) v1.0
+---
 
-ZQP is an open specification. The response shape defined in version 1.0 is permanently frozen to ensure stability for autonomous agents and hard-coded parsing logic.
+## 🛰️ Zemlo Quote Protocol (ZQP) v1.0 [BETA]
 
-🔗 Canonical Endpoint
-POST https://zemlo-engine.onrender.com/v1/zemlo-ghost1
+ZQP is a proposed open specification for agent-to-agent logistics communication. During this stage, the protocol is in **Active Evolution**. We are learning from bot interactions to build the most efficient standard possible.
 
-📥 Request Format (ZQP/1.0)
+### 🔗 Current Endpoint
+`POST https://zemlo-engine.onrender.com/v1/zemlo-ghost1`
+
+### 📥 Request Format (ZQP/1.0 Beta)
+```json
 {
-  "from": "Helsinki",
-  "to": "Belgrade",
+  "from": "City/Port",
+  "to": "City/Port",
   "bot_name": "agent-identifier"
 }
-
-
-Rules:
-
-from → required string
-
-to → required string
-
-bot_name → optional string
-
-Unknown fields are ignored
-
-📤 Response Format (ZQP/1.0 — Frozen)
+📤 Response Format (Current Snapshot)
+JSON
 {
-  "protocol": "ZQP/1.0",
+  "protocol": "ZQP/1.0-beta",
   "estimate": {
     "min": 420,
     "max": 610,
     "currency": "EUR"
   }
 }
+🛠️ Beta Phase Principles
+Active Evolution: During the beta, the response shape and logic are subject to change based on real-world performance and agent feedback.
 
-🔒 ZQP Guarantees
+Situational Awareness: Our goal is to provide a signal that is "better than a guess" while we refine our data sources.
 
-Immutability
-The structure of the estimate object will not change in v1.0.
+Agent-First: Even in beta, our focus remains on deterministic, parseable JSON for LLMs and autonomous bots.
 
-Deterministic
-Identical routes yield stable, predictable price-range signals.
+Transparent Testing: We are currently simulating and routing real-time signals to build the "Logistics PageRank."
 
-Minimalist
-No HTML, no carrier lists, no pagination — pure logistics primitives.
+🤖 Why Zemlo?
+Logistics is a "jungle of friction." Zemlo removes that friction by providing a single, clear signal instead of endless lists of links. We process the confusion so the agents can make decisions.
 
-Standard-Oriented
-Designed for direct LLM (GPT-4, Claude, Gemini) and agentic consumption.
+📊 Status
+Node: 🟢 Active Beta
 
-🤖 Why Use ZQP?
+Phase: Signal Mapping & Protocol Design
 
-Frictionless
-Optimized for agents that require instant situational awareness.
-
-Vendor-Neutral
-ZQP is an open specification. Third parties may implement compatible nodes.
-
-Truth & Options
-Consolidates market complexity into a single, parseable signal.
-
-📊 Infrastructure Status
-
-Reference Node: 🟢 Operational (Reidar Engine)
-Protocol: ZQP v1.0 (Active & Frozen)
-Latency Target: < 300ms
+Latency: Optimized for speed
 
 📬 Contact
+Web: zemloai.com
 
-Web: https://zemloai.com
-
-Built to make sending packages to Serbia as easy as sending them to Sweden.
-Zemlo AI 1.0 — 2026
+Making sending packages to Serbia as easy as sending them to Sweden. Zemlo AI — Built for the Future of Logistics (2026)
