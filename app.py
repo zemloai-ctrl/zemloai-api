@@ -1,12 +1,6 @@
 from flask import Flask, request, jsonify
-import time
-import uuid
-import os
-import requests
-import threading
+import time, uuid, os, requests, threading
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 from supabase import create_client, Client
 
 app = Flask(__name__)
@@ -18,102 +12,57 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 SHIPPO_API_KEY = os.environ.get("SHIPPO_API_KEY")
 PACKLINK_API_KEY = os.environ.get("PACKLINK_API_KEY")
 
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-else:
-    supabase = None
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
 
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["10 per second"],
-    storage_uri="memory://"
-)
+# --- ÄLYKÄS BOTTI-TUNNISTUS ---
+def is_bot(ua):
+    if not ua: return False
+    indicators = ['python', 'openai', 'bot', 'curl', 'gemini', 'gpt', 'claude']
+    return any(ind in ua.lower() for ind in indicators)
 
-stats = {"total_queries": 0, "bot_queries": 0}
-
-# --- APUFUNKTIOT ---
-def is_bot(ua, url_params=None):
-    if not ua: ua = ""
-    indicators = ['python', 'openai', 'claude', 'gpt', 'bot', 'curl', 'langchain', 'postman', 'gemini', 'test-bot']
-    ua_match = any(ind in ua.lower() for ind in indicators)
-    param_match = False
-    if url_params and url_params.get('ua'):
-        param_match = any(ind in str(url_params.get('ua')).lower() for ind in indicators)
-    return ua_match or param_match
-
-def log_signal_to_supabase(origin, destination, price_min, price_max, bot_name="System"):
-    """Tallentaa varsinaisen logistiikkasignaalin julkiseen lokiin."""
+def log_signal_to_supabase(origin, destination, price_min, price_max, bot_name, is_ai):
     if not supabase: return
     try:
-        data = {
-            "origin": origin,
-            "destination": destination,
+        supabase.table("signals").insert({
+            "origin": str(origin)[:50],
+            "destination": str(destination)[:50],
             "cargo": "General Cargo",
-            "type": "AI_SIGNAL",
+            "type": "AI_SIGNAL" if is_ai else "HUMAN_QUERY",
             "bot_name": bot_name,
             "price_estimate": f"{price_min}-{price_max} EUR"
-        }
-        supabase.table("signals").insert(data).execute()
+        }).execute()
     except Exception as e:
-        print(f"Signal logging error: {e}")
+        print(f"Logging error: {e}")
 
-# --- REITIT ---
-@app.route('/')
-def home():
-    return jsonify({
-        "message": "Zemlo AI 1.1 - Reidar Engine is Live",
-        "status": "Operational",
-        "apis_connected": {
-            "shippo": bool(SHIPPO_API_KEY),
-            "packlink": bool(PACKLINK_API_KEY)
-        },
-        "owner": "Sakke"
-    })
-
+@app.route('/v1/zemlo-ghost1', methods=['POST'])
 @app.route('/api/v1/quote', methods=['GET', 'POST'])
-@app.route('/v1/zemlo-ghost1', methods=['POST']) # Botit herättävät tämän
 def get_quote():
     start_time = time.time()
     ua = request.headers.get('User-Agent', '')
-    ip = request.headers.get('x-forwarded-for', request.remote_addr).split(',')[0]
-    
     data = request.get_json(silent=True) or {}
-    bot_caller = data.get('bot_name', 'Unknown Bot')
     
-    # 1. Määritetään reitti (Zemlo Lite -logiikka)
-    origin = data.get('from', 'Helsinki')
-    destination = data.get('to', 'Berlin')
+    # ChatGPT:n huomio: Otetaan bottitunnistus käyttöön
+    current_is_bot = is_bot(ua) or "bot_name" in data
+    caller = data.get('bot_name', 'Human' if not current_is_bot else 'AI Agent')
 
-    # 2. Simuloidaan/Haetaan hintoja (MVP-vaiheessa hinta-arvio perustuu lähteisiin)
-    # Tässä kohtaa Reidar tekee "Totuus ja vaihtoehdot" -päätöksen
-    base_price = 450 # Oletushinta jos apit ei vastaa
-    price_min = base_price - 50
-    price_max = base_price + 150
+    origin = str(data.get('from', 'Helsinki'))[:50]
+    destination = str(data.get('to', 'Berlin'))[:50]
 
-    # 3. Tallennetaan signaali tauluun (Tämä näkyy sun etusivulla)
-    log_signal_to_supabase(origin, destination, price_min, price_max, bot_caller)
+    # Zemlo 1.0 logiikka: Totuus ja vaihtoehdot
+    # Tähän tulee myöhemmin oikeat haut SHIPPO_API_KEY:llä
+    base_price = 450 
+    price_min, price_max = base_price - 50, base_price + 150
 
-    duration = int((time.time() - start_time) * 1000)
-    
+    # Tausta-ajo signaalille, jotta vastaus on nopea
+    threading.Thread(target=log_signal_to_supabase, 
+                     args=(origin, destination, price_min, price_max, caller, current_is_bot)).start()
+
     return jsonify({
         "zemlo_status": "Success",
-        "route": f"{origin} -> {destination}",
-        "estimate": {
-            "min_price": price_min,
-            "max_price": price_max,
-            "currency": "EUR",
-            "confidence": "Better than a guess" # Zemlon lupaus
-        },
-        "metadata": {
-            "bot_triggered": bot_caller,
-            "response_time_ms": duration
-        }
+        "estimate": {"min": price_min, "max": price_max, "currency": "EUR"},
+        "disclaimer": "Better than a guess",
+        "meta": {"is_ai": current_is_bot, "duration_ms": int((time.time()-start_time)*1000)}
     })
 
-@app.route('/api/v1/stats')
-def get_stats():
-    return jsonify(stats)
-
 if __name__ == "__main__":
-    app.run()
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
