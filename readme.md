@@ -1,48 +1,79 @@
-# 🚀 Zemlo AI
+🚀 Zemlo AI: The Logistics Signal Node
 
-> **The First AI-Agent Optimized Logistics Infrastructure.**
-> No auth, no rate limits, just situational awareness.
+Zemlo is a "clarification machine" for global logistics.
+Providing a deterministic price-range signal for autonomous decision systems.
 
-Zemlo AI is a "clarification machine" designed to remove friction from global logistics. It provides a strategic snapshot of shipping options—better than a guess, faster than a forwarder.
+Zemlo AI operates the primary reference node for the Zemlo Quote Protocol (ZQP), an open specification designed for AI-Agent optimized logistics infrastructure.
 
----
+🛰️ Zemlo Quote Protocol (ZQP) v1.0
 
-## 🔗 Live API
+ZQP is an open specification. The response shape defined in version 1.0 is permanently frozen to ensure stability for autonomous agents and hard-coded parsing logic.
 
-**Base Endpoint:** `https://zemloai-api.onrender.com`
+🔗 Canonical Endpoint
+POST https://zemlo-engine.onrender.com/v1/zemlo-ghost1
 
-**Status:** 🟢 Online (Beta)
+📥 Request Format (ZQP/1.0)
+{
+  "from": "Helsinki",
+  "to": "Belgrade",
+  "bot_name": "agent-identifier"
+}
 
----
 
-## 📖 Quick Start
+Rules:
 
-Zemlo AI is designed to be called directly by LLMs (GPT-4, Claude, Gemini) and autonomous agents.
+from → required string
 
-### Get a Quote
+to → required string
 
-```bash
-curl -X POST [https://zemloai-api.onrender.com/api/v1/quote](https://zemloai-api.onrender.com/api/v1/quote) \
-  -H "Content-Type: application/json" \
-  -d '{"from": "Helsinki", "to": "Belgrade", "item": "Industrial Equipment"}'
-🤖 Built for AI Agents
-No Auth Required: Frictionless access for agents.
+bot_name → optional string
 
-Predictable JSON: Strict data types.
+Unknown fields are ignored
 
-Situational Awareness: Not just prices, but reality.
+📤 Response Format (ZQP/1.0 — Frozen)
+{
+  "protocol": "ZQP/1.0",
+  "estimate": {
+    "min": 420,
+    "max": 610,
+    "currency": "EUR"
+  }
+}
 
-📊 API Endpoints
-POST /api/v1/quote -> Get shipping alternatives.
+🔒 ZQP Guarantees
 
-GET /api/v1/stats -> Network health.
+Immutability
+The structure of the estimate object will not change in v1.0.
 
-🛠️ Tech Stack
-Python 3.11 / Flask
+Deterministic
+Identical routes yield stable, predictable price-range signals.
 
-Deployed on Render
+Minimalist
+No HTML, no carrier lists, no pagination — pure logistics primitives.
+
+Standard-Oriented
+Designed for direct LLM (GPT-4, Claude, Gemini) and agentic consumption.
+
+🤖 Why Use ZQP?
+
+Frictionless
+Optimized for agents that require instant situational awareness.
+
+Vendor-Neutral
+ZQP is an open specification. Third parties may implement compatible nodes.
+
+Truth & Options
+Consolidates market complexity into a single, parseable signal.
+
+📊 Infrastructure Status
+
+Reference Node: 🟢 Operational (Reidar Engine)
+Protocol: ZQP v1.0 (Active & Frozen)
+Latency Target: < 300ms
 
 📬 Contact
-Web: zemloai.com
 
-Built with ❤️ on Valentine's Day 2026.
+Web: https://zemloai.com
+
+Built to make sending packages to Serbia as easy as sending them to Sweden.
+Zemlo AI 1.0 — 2026
