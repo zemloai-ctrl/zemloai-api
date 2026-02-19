@@ -1,5 +1,5 @@
 flask
-gunicorn
 flask-cors
-flask-limiter
+requests
 supabase
+google-generativeai
