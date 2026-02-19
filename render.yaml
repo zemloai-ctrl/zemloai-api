@@ -1,7 +1,19 @@
 services:
   - type: web
-    name: zemloai-api
-    env: python
+    name: zemlo-api
+    runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:10000
-    plan: free
+    startCommand: gunicorn app:app
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SHIPPO_API_KEY
+        sync: false
+      - key: PACKLINK_API_KEY
+        sync: false
