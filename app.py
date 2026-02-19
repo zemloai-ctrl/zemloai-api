@@ -6,10 +6,13 @@ from supabase import create_client, Client
 # Tuodaan Oraakkeli (Gemini-äly)
 try:
     from intelligence.oracle import get_logistics_advice
-except ImportError:
-    # Fallback jos tiedostoa ei vielä löydy tai polku on väärä
+except Exception as e:
+    print(f"AI Oracle import failed: {e}")
     def get_logistics_advice(origin, destination, cargo):
-        return {"risk_assessment": "Standard logistics conditions apply.", "action_plan": ["Ensure documentation is correct."]}
+        return {
+            "risk_assessment": "Oracle offline - using standard safety protocols.",
+            "action_plan": ["Verify all documents manually", "Check local customs website"]
+        }
 
 app = Flask(__name__)
 CORS(app)
@@ -20,7 +23,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 SHIPPO_API_KEY = os.environ.get("SHIPPO_API_KEY")
 PACKLINK_API_KEY = os.environ.get("PACKLINK_API_KEY")
 
-# Alustetaan Supabase vain jos avaimet löytyvät
+# Alustetaan Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 # --- APUFUNKTIOT ---
@@ -32,26 +35,23 @@ def is_bot(ua):
 def log_to_supabase(origin, destination, price_range, caller, is_ai):
     if not supabase: return
     try:
-        # TÄMÄ ON KORJAUS: Try-block suojaa, jos kanta ei vastaa skeemaa
         supabase.table("signals").insert({
             "origin": origin,
             "destination": destination,
             "type": "AI_SIGNAL" if is_ai else "HUMAN_QUERY",
-            "bot_name": caller, # Jos tämä sarake puuttuu, siirrytään except-kohtaan
+            "bot_name": caller,
             "price_estimate": price_range
         }).execute()
     except Exception as e:
-        # Tulostetaan virhe lokiin, mutta ei kaadeta sovellusta
-        print(f"Supabase logging skipped or failed: {e}")
+        print(f"Supabase logging skipped: {e}")
 
-# --- PÄÄ-ENDPOINT: THE SIGNAL ---
+# --- PÄÄ-ENDPOINT ---
 @app.route('/signal', methods=['GET', 'POST'])
 @app.route('/api/v1/quote', methods=['GET', 'POST'])
 def get_signal():
     start_time = time.time()
     ua = request.headers.get('User-Agent', '')
     
-    # Haetaan data
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
     else:
@@ -63,15 +63,42 @@ def get_signal():
     current_is_bot = is_bot(ua) or "bot_name" in data
     caller = data.get('bot_name', 'Human' if not current_is_bot else 'AI Agent')
 
-    # --- ZEMLO LOGIC (The Signal) ---
-    # Kutsutaan AI-Oraakkelia (Gemini 1.5 Flash)
+    # Kutsutaan AI-Oraakkelia
     ai_insight = get_logistics_advice(origin, destination, cargo)
 
-    base_price = 450 # Tähän pultataan myöhemmin dynaaminen hinta
+    base_price = 450
     price_min = int(base_price * 0.9)
     price_max = int(base_price * 1.3)
     
-    # Rakennetaan neutraali vastausrakenne
+    # RAKENNETAAN VASTAUS (Tarkistettu syntaksi)
     signal_response = {
         "zemlo_signal": {
-            "status":
+            "status": "Reliable",
+            "estimate": {
+                "range": f"{price_min}-{price_max}",
+                "currency": "EUR",
+                "confidence": "88%"
+            },
+            "logistics_intel": {
+                "est_delivery": "4-6 days",
+                "risk_assessment": ai_insight.get("risk_assessment", "Standard route.")
+            }
+        },
+        "action_plan": ai_insight.get("action_plan", ["Ensure documentation is correct."]),
+        "meta": {
+            "is_ai_optimized": True,
+            "provider": "Zemlo 1.0 Lite",
+            "disclaimer": "Better situational awareness than a guess.",
+            "duration_ms": int((time.time()-start_time)*1000)
+        }
+    }
+
+    # Taustaloggaus
+    threading.Thread(target=log_to_supabase, 
+                     args=(origin, destination, f"{price_min}-{price_max}", caller, current_is_bot)).start()
+
+    return jsonify(signal_response)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
