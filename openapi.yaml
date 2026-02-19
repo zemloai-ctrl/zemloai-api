@@ -1,62 +1,48 @@
-openapi: 3.0.1
+openapi: 3.0.0
 info:
-  title: Zemlo ZQP Reference Node
-  version: '1.0-beta'
-  description: >
-    Zemlo ZQP (Zemlo Quote Protocol) provides deterministic logistics price-range signals 
-    optimized for AI agents and autonomous systems. Active Beta Phase.
+  title: Zemlo 1.0 Lite API
+  description: The Logistics Signal Engine. Provides neutral price estimates and AI-driven risk analysis for global shipping routes.
+  version: 1.0.0
 servers:
-  - url: https://zemlo-engine.onrender.com
+  - url: https://your-render-url.onrender.com
+    description: Production server
 paths:
-  /v1/zemlo-ghost1:
-    post:
-      summary: Get ZQP Logistics Signal
-      operationId: getZqpSignal
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ZqpRequest'
+  /signal:
+    get:
+      summary: Get a logistics signal for a specific route
+      description: Returns a price range, delivery estimate, and AI-powered risk assessment.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+          example: Belgrade
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+          example: Helsinki
+        - name: bot_name
+          in: query
+          required: false
+          schema:
+            type: string
+          example: MyAgentBot
       responses:
         '200':
-          description: ZQP Logistics Signal Response
+          description: A successful logistics signal
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ZqpResponse'
-components:
-  schemas:
-    ZqpRequest:
-      type: object
-      required:
-        - from
-        - to
-      properties:
-        from:
-          type: string
-          example: Helsinki
-        to:
-          type: string
-          example: Belgrade
-        bot_name:
-          type: string
-          example: my-agent-01
-    ZqpResponse:
-      type: object
-      properties:
-        protocol:
-          type: string
-          example: ZQP/1.0-beta
-        estimate:
-          type: object
-          properties:
-            min:
-              type: number
-              example: 420
-            max:
-              type: number
-              example: 610
-            currency:
-              type: string
-              example: EUR
+                type: object
+                properties:
+                  zemlo_signal:
+                    type: object
+                  action_plan:
+                    type: array
+                    items:
+                      type: string
+                  meta:
+                    type: object
