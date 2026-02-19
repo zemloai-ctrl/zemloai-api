@@ -3,13 +3,14 @@ import time, os
 from flask_cors import CORS
 from supabase import create_client, Client
 
+# --- KONFIGURAATIO ---
 app = Flask(__name__)
 CORS(app)
 
-# --- KONFIGURAATIO ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
+# Alustetaan Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 def is_bot(ua):
@@ -17,60 +18,72 @@ def is_bot(ua):
     indicators = ['python', 'openai', 'bot', 'curl', 'gemini', 'gpt', 'claude']
     return any(ind in ua.lower() for ind in indicators)
 
-def log_to_supabase(origin, destination, price_range, caller, is_ai, cargo_val):
+def log_to_supabase(origin, destination, price_range, caller, cargo_val):
     if not supabase: return
-    # ESTETÄÄN RENDER-ROBOTIN TALLENNUS (Siivotaan kanta)
-    if "Render" in caller or "Render/1.0" in caller:
+    
+    # --- KOVA SUODATIN ---
+    # 1. Jos User-Agent sisältää "Render", älä tallenna.
+    # 2. Jos origin ja destination ovat oletuksia (Helsinki/Berlin), älä tallenna (estää tyhjät robotit).
+    if "Render" in caller or (origin == "Helsinki" and destination == "Berlin"):
         return 
-        
+
     try:
         supabase.table("signals").insert({
             "origin": origin,
             "destination": destination,
-            "cargo": cargo_val, # Nyt se ottaa tämän muuttujan
+            "cargo": cargo_val,
             "bot_name": caller,
             "price_estimate": price_range
         }).execute()
-        print(f"!!! SUCCESS: Saved {origin} -> {destination} ({cargo_val})")
+        print(f"!!! REAL SIGNAL CAPTURED: {origin} -> {destination}")
     except Exception as e:
-        print(f"!!! ERROR: {str(e)}")
+        print(f"!!! SUPABASE ERROR: {str(e)}")
 
 @app.route('/signal', methods=['GET', 'POST'])
+@app.route('/api/v1/quote', methods=['GET', 'POST'])
 def get_signal():
     start_time = time.time()
     ua = request.headers.get('User-Agent', '')
     
+    # Katsotaan mistä data tulee
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
     else:
         data = request.args
 
-    # HAETAAN TIEDOT TAI KÄYTETÄÄN OLETUKSIA
+    # Haetaan arvot
     origin = data.get('from', 'Helsinki')
     destination = data.get('to', 'Berlin')
-    cargo_item = data.get('cargo', 'General goods') # Tämä muuttuja talteen
+    cargo = data.get('cargo', 'General goods')
     
-    current_is_bot = is_bot(ua) or "bot_name" in data
-    
-    # Tunnistetaan onko kyseessä Renderin tarkistus
+    # Tunnistetaan kutsuja
+    current_is_bot = is_bot(ua)
     if "Render" in ua:
         caller = "Render Health Check"
     else:
         caller = data.get('bot_name', 'Human' if not current_is_bot else 'AI Agent')
 
-    price_range_str = "405-585"
+    price_range = "405-585"
 
-    # TALLENNUS
-    log_to_supabase(origin, destination, price_range_str, caller, current_is_bot, cargo_item)
+    # Tallennetaan vain aidot haut
+    log_to_supabase(origin, destination, price_range, caller, cargo)
 
+    # Vastaus (Zemlo 1.0 Lite -määritelmä: toimii ihmiselle ja botille)
     return jsonify({
         "zemlo_signal": {
             "status": "Reliable",
-            "estimate": {"range": price_range_str, "currency": "EUR"},
-            "route": f"{origin} to {destination}",
-            "item": cargo_item
+            "estimate": {
+                "range": price_range,
+                "currency": "EUR"
+            },
+            "route": {"from": origin, "to": destination},
+            "cargo": cargo
         },
-        "meta": {"provider": "Zemlo 1.0 Lite", "caller": caller}
+        "meta": {
+            "provider": "Zemlo 1.0 Lite",
+            "disclaimer": "Better situational awareness than a guess.",
+            "duration_ms": int((time.time()-start_time)*1000)
+        }
     })
 
 if __name__ == "__main__":
