@@ -20,8 +20,6 @@ CORS(app)
 # --- KONFIGURAATIO ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-SHIPPO_API_KEY = os.environ.get("SHIPPO_API_KEY")
-PACKLINK_API_KEY = os.environ.get("PACKLINK_API_KEY")
 
 # Alustetaan Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
@@ -32,18 +30,19 @@ def is_bot(ua):
     indicators = ['python', 'openai', 'bot', 'curl', 'gemini', 'gpt', 'claude']
     return any(ind in ua.lower() for ind in indicators)
 
-def log_to_supabase(origin, destination, price_range, caller, is_ai):
+def log_to_supabase(origin, destination, price_range, caller, is_ai, cargo):
     if not supabase: return
     try:
+        # TÄMÄ OSA ON NYT KORJATTU TÄSMÄÄMÄÄN SUPABASE-TAULUSI KANSSA
         supabase.table("signals").insert({
             "origin": origin,
             "destination": destination,
-            "type": "AI_SIGNAL" if is_ai else "HUMAN_QUERY",
-            "bot_name": caller,
-            "price_estimate": price_range
+            "cargo": cargo,           # Täsmää kuvasi 'cargo'-sarakkeeseen
+            "bot_name": caller,       # Täsmää kuvasi 'bot_name'-sarakkeeseen
+            "price_estimate": price_range # Täsmää kuvasi 'price_estimate'-sarakkeeseen
         }).execute()
     except Exception as e:
-        print(f"Supabase logging skipped: {e}")
+        print(f"Supabase logging failed: {e}")
 
 # --- PÄÄ-ENDPOINT ---
 @app.route('/signal', methods=['GET', 'POST'])
@@ -66,16 +65,18 @@ def get_signal():
     # Kutsutaan AI-Oraakkelia
     ai_insight = get_logistics_advice(origin, destination, cargo)
 
+    # Lasketaan hinta-arvio (Zemlo 1.0 Lite logiikka)
     base_price = 450
     price_min = int(base_price * 0.9)
     price_max = int(base_price * 1.3)
+    price_range_str = f"{price_min}-{price_max}"
     
-    # RAKENNETAAN VASTAUS (Tarkistettu syntaksi)
+    # RAKENNETAAN VASTAUS
     signal_response = {
         "zemlo_signal": {
             "status": "Reliable",
             "estimate": {
-                "range": f"{price_min}-{price_max}",
+                "range": price_range_str,
                 "currency": "EUR",
                 "confidence": "88%"
             },
@@ -93,13 +94,12 @@ def get_signal():
         }
     }
 
-    # Taustaloggaus
+    # Taustaloggaus (Nyt korjatulla parametrilistalla)
     threading.Thread(target=log_to_supabase, 
-                     args=(origin, destination, f"{price_min}-{price_max}", caller, current_is_bot)).start()
+                     args=(origin, destination, price_range_str, caller, current_is_bot, cargo)).start()
 
     return jsonify(signal_response)
 
 if __name__ == "__main__":
-    # Haetaan portti Renderin ympäristömuuttujasta, oletus 10000 on usein Renderin suosikki
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
