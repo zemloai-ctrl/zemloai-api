@@ -100,5 +100,6 @@ def get_signal():
     return jsonify(signal_response)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    # Haetaan portti Renderin ympäristömuuttujasta, oletus 10000 on usein Renderin suosikki
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
