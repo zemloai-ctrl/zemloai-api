@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import time, os, threading
+import time, os
 from flask_cors import CORS
 from supabase import create_client, Client
 
@@ -7,7 +7,6 @@ from supabase import create_client, Client
 try:
     from intelligence.oracle import get_logistics_advice
 except Exception as e:
-    print(f"AI Oracle import failed: {e}")
     def get_logistics_advice(origin, destination, cargo):
         return {
             "risk_assessment": "Oracle offline - using standard safety protocols.",
@@ -31,18 +30,22 @@ def is_bot(ua):
     return any(ind in ua.lower() for ind in indicators)
 
 def log_to_supabase(origin, destination, price_range, caller, is_ai, cargo):
-    if not supabase: return
+    if not supabase: 
+        print("!!! SUPABASE ERROR: Client not initialized (URL/KEY missing?)")
+        return
     try:
-        # TÄMÄ OSA ON NYT KORJATTU TÄSMÄÄMÄÄN SUPABASE-TAULUSI KANSSA
+        # TÄMÄ ON SE RATKAISEVA TALLENNUS
+        print(f"Attempting to log to Supabase: {origin} -> {destination}")
         supabase.table("signals").insert({
             "origin": origin,
             "destination": destination,
-            "cargo": cargo,           # Täsmää kuvasi 'cargo'-sarakkeeseen
-            "bot_name": caller,       # Täsmää kuvasi 'bot_name'-sarakkeeseen
-            "price_estimate": price_range # Täsmää kuvasi 'price_estimate'-sarakkeeseen
+            "cargo": cargo,
+            "bot_name": caller,
+            "price_estimate": price_range
         }).execute()
+        print("!!! SUPABASE SUCCESS: Data saved to table 'signals'")
     except Exception as e:
-        print(f"Supabase logging failed: {e}")
+        print(f"!!! SUPABASE ERROR: {str(e)}")
 
 # --- PÄÄ-ENDPOINT ---
 @app.route('/signal', methods=['GET', 'POST'])
@@ -62,16 +65,18 @@ def get_signal():
     current_is_bot = is_bot(ua) or "bot_name" in data
     caller = data.get('bot_name', 'Human' if not current_is_bot else 'AI Agent')
 
-    # Kutsutaan AI-Oraakkelia
-    ai_insight = get_logistics_advice(origin, destination, cargo)
-
-    # Lasketaan hinta-arvio (Zemlo 1.0 Lite logiikka)
+    # Lasketaan hinta-arvio
     base_price = 450
     price_min = int(base_price * 0.9)
     price_max = int(base_price * 1.3)
     price_range_str = f"{price_min}-{price_max}"
+
+    # AI-Oraakkeli
+    ai_insight = get_logistics_advice(origin, destination, cargo)
     
-    # RAKENNETAAN VASTAUS
+    # TALLENNETAAN (Suoraan ilman threadia, jotta virhe näkyy logissa)
+    log_to_supabase(origin, destination, price_range_str, caller, current_is_bot, cargo)
+
     signal_response = {
         "zemlo_signal": {
             "status": "Reliable",
@@ -93,10 +98,6 @@ def get_signal():
             "duration_ms": int((time.time()-start_time)*1000)
         }
     }
-
-    # Taustaloggaus (Nyt korjatulla parametrilistalla)
-    threading.Thread(target=log_to_supabase, 
-                     args=(origin, destination, price_range_str, caller, current_is_bot, cargo)).start()
 
     return jsonify(signal_response)
 
