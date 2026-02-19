@@ -4,7 +4,7 @@ info:
   description: The Logistics Signal Engine. Provides neutral price estimates and AI-driven risk analysis for global shipping routes.
   version: 1.0.0
 servers:
-  - url: https://your-render-url.onrender.com
+  - url: https://zemloai-api.onrender.com
     description: Production server
 paths:
   /signal:
