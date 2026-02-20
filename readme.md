@@ -1,50 +1,51 @@
-🌍 Zemlo 1.0 Lite
-The Global Logistics Signal Node
-Zemlo is the Clarification Machine for the AI-agent era. We process the global chaos of freight rates, customs bureaucracy, and geopolitical risks into a single, deterministic Signal.
+# 🌍 Zemlo 1.0 Lite
+### The Global Logistics Signal Node
 
-Zemlo doesn’t just list prices. It provides Situational Awareness.
+**Zemlo is the Clarification Machine for the AI-agent era.** We process the global chaos of freight rates, customs bureaucracy, and geopolitical risks into a single, deterministic **Signal**.
 
-🚀 The Vision
-Autonomous supply chains require more than scraped prices. Zemlo 1.0 Lite provides the intelligence layer for agentic commerce, delivering:
+Zemlo doesn’t just list prices. **It provides Situational Awareness.**
 
-Neutral Market Signals – Unbiased by carrier sales targets.
+---
 
-Situational Context – Real-time risk and customs logic.
+### 🚀 The Vision
+Autonomous supply chains require more than scraped prices. Zemlo 1.0 Lite provides the intelligence layer for **agentic commerce**, delivering:
+* **Neutral Market Signals** – Unbiased by carrier sales targets.
+* **Situational Context** – Real-time risk and customs logic.
+* **Frictionless API** – Built for LLMs and autonomous decision systems.
 
-Frictionless API – Built for LLMs and autonomous decision systems.
+---
 
-🧠 Core Pillars
-🔹 The Signal A normalized, neutral freight estimate. Better than a guess. Structured for machines.
+### 🧠 Core Pillars
 
-🔹 Situational Awareness Real-time risk synthesis. Powered by Google Gemini 1.5 Flash.
+**🔹 The Signal** A normalized, neutral freight estimate. Better than a guess. Structured for machines.
 
-🔹 The Checklist A 3-step friction-removal engine: Validate Weight → Identify Constraints → Generate Action Plan.
+**🔹 Situational Awareness** Real-time risk synthesis. Powered by Google Gemini 1.5 Flash.
 
-🔹 Agent-Optimized Zero authentication. Single endpoint. Built for the future of automated trade.
+**🔹 The Checklist** A 3-step friction-removal engine: **Validate Weight** → **Identify Constraints** → **Generate Action Plan**.
 
-🛠 Technical Foundation
-Engine: Python / Flask
+**🔹 Agent-Optimized** Zero authentication. Single endpoint. Built for the future of automated trade.
 
-Intelligence: Google Gemini API
+---
 
-Storage: Supabase (Signal Logging)
+### 🛠 Technical Foundation
+* **Engine:** Python / Flask
+* **Intelligence:** Google Gemini API
+* **Storage:** Supabase (Real-time Signal Logging)
+* **Node:** v1.0 Lite Deployment
 
-Node: v1.0 Lite Deployment
+---
 
-📡 API Specification
-Endpoint: GET /price_estimate
+### 📡 API Specification
 
-Query Parameters:
+**Endpoint:** `GET /price_estimate`
 
-origin: Port or City of departure
+**Query Parameters:**
+* `origin`: Port or City of departure
+* `destination`: Port or City of arrival
+* `cargo_type`: Container, Bulk, Air, or Parcel
 
-destination: Port or City of arrival
-
-cargo_type: Container, Bulk, Air, or Parcel
-
-Example JSON Response:
-
-JSON
+**Example JSON Response:**
+```json
 {
   "signal": {
     "min_price_eur": 540,
@@ -62,26 +63,3 @@ JSON
     "3. Use Detailed Search to lock this price signal."
   ]
 }
-
-📈 Why Zemlo Wins (The Moat)
-Neutrality as a Feature: We don't sell space; we sell the Signal. This makes us the trusted oracle for AI agents.
-
-The Agentic Edge: Zero friction. No auth-walls. We are the first node in the global Logistics PageRank network.
-
-Context over Data: A price is just a number. A Zemlo Signal includes the context that prevents supply chain failures.
-
-Scalable Trust: Every query improves the node. We are building the historical Truth Map of global logistics.
-
-🎯 Philosophy
-"Zemlo does not promise perfect prices. It promises something more valuable: Better situational awareness than a guess."
-
-⚙️ Local Development
-1. Clone the repository
-Bash
-git clone https://github.com/zemloai-ctrl/zemloai-api.git
-2. Install dependencies
-Bash
-pip install -r requirements.txt
-3. Run the engine
-Bash
-python app.py
