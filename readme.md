@@ -1,14 +1,14 @@
-# 🌍 Zemlo 1.0 Lite
+# 🌍 Zemlo AI 1.0 Lite
 ### The Global Logistics Signal Node
 
-**Zemlo is the Clarification Machine for the AI-agent era.** We process the global chaos of freight rates, customs bureaucracy, and geopolitical risks into a single, deterministic **Signal**.
+**Zemlo AI is the Clarification Machine for the AI-agent era.** We process the global chaos of freight rates, customs bureaucracy, and geopolitical risks into a single, deterministic **Signal**.
 
-Zemlo doesn’t just list prices. **It provides Situational Awareness.**
+Zemlo AI doesn’t just list prices. **It provides Situational Awareness.**
 
 ---
 
 ### 🚀 The Vision
-Autonomous supply chains require more than scraped prices. Zemlo 1.0 Lite provides the intelligence layer for **agentic commerce**, delivering:
+Autonomous supply chains require more than scraped prices. Zemlo AI 1.0 Lite provides the intelligence layer for **agentic commerce**, delivering:
 * **Neutral Market Signals** – Unbiased by carrier sales targets.
 * **Situational Context** – Real-time risk and customs logic.
 * **Frictionless API** – Built for LLMs and autonomous decision systems.
@@ -37,12 +37,12 @@ Autonomous supply chains require more than scraped prices. Zemlo 1.0 Lite provid
 
 ### 📡 API Specification
 
-**Endpoint:** `GET /price_estimate`
+**Endpoint:** GET /price_estimate
 
 **Query Parameters:**
-* `origin`: Port or City of departure
-* `destination`: Port or City of arrival
-* `cargo_type`: Container, Bulk, Air, or Parcel
+* origin: Port or City of departure
+* destination: Port or City of arrival
+* cargo_type: Container, Bulk, Air, or Parcel
 
 **Example JSON Response:**
 ```json
@@ -63,3 +63,31 @@ Autonomous supply chains require more than scraped prices. Zemlo 1.0 Lite provid
     "3. Use Detailed Search to lock this price signal."
   ]
 }
+```
+
+---
+
+### 📈 Why Zemlo AI Wins (The Moat)
+
+* **Neutrality as a Feature:** We don't sell space; we sell the **Signal**. This makes us the trusted oracle for AI agents.
+* **The Agentic Edge:** Zero friction. No auth-walls. We are the first node in the global **Logistics PageRank** network.
+* **Context over Data:** A price is just a number. A Zemlo AI Signal includes the context that prevents supply chain failures.
+* **Scalable Trust:** Every query improves the node. We are building the historical **Truth Map** of global logistics.
+
+---
+
+### 🎯 Philosophy
+> *"Zemlo AI does not promise perfect prices. It promises something more valuable: Better situational awareness than a guess."*
+
+---
+
+### ⚙️ Local Development
+
+##### 1. Clone the repository
+git clone https://github.com/zemloai-ctrl/zemloai-api.git
+
+##### 2. Install dependencies
+pip install -r requirements.txt
+
+##### 3. Run the engine
+python app.py
