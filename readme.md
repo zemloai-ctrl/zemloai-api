@@ -14,25 +14,20 @@ Situational Context – Real-time risk and customs logic.
 Frictionless API – Built for LLMs and autonomous decision systems.
 
 🧠 Core Pillars
+🔹 The Signal A normalized, neutral freight estimate. Better than a guess. Structured for machines.
 
-🔹 The Signal
-A normalized, neutral freight estimate. Better than a guess. Structured for machines.
+🔹 Situational Awareness Real-time risk synthesis. Powered by Google Gemini 1.5 Flash.
 
-🔹 Situational Awareness
-Real-time risk synthesis. Powered by Google Gemini 1.5 Flash.
+🔹 The Checklist A 3-step friction-removal engine: Validate Weight → Identify Constraints → Generate Action Plan.
 
-🔹 The Checklist
-A 3-step friction-removal engine: Validate Weight → Identify Constraints → Generate Action Plan.
-
-🔹 Agent-Optimized
-Zero authentication. Single endpoint. Built for the future of automated trade.
+🔹 Agent-Optimized Zero authentication. Single endpoint. Built for the future of automated trade.
 
 🛠 Technical Foundation
 Engine: Python / Flask
 
 Intelligence: Google Gemini API
 
-Storage: Supabase (Real-time Signal Logging)
+Storage: Supabase (Signal Logging)
 
 Node: v1.0 Lite Deployment
 
@@ -81,12 +76,12 @@ Scalable Trust: Every query improves the node. We are building the historical Tr
 "Zemlo does not promise perfect prices. It promises something more valuable: Better situational awareness than a guess."
 
 ⚙️ Local Development
+1. Clone the repository
 Bash
-# Clone the repository
-git clone https://github.com/yourusername/zemlo.git
-
-# Install dependencies
+git clone https://github.com/zemloai-ctrl/zemloai-api.git
+2. Install dependencies
+Bash
 pip install -r requirements.txt
-
-# Run the engine
+3. Run the engine
+Bash
 python app.py
