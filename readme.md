@@ -83,11 +83,17 @@ Autonomous supply chains require more than scraped prices. Zemlo AI 1.0 Lite pro
 
 ### ⚙️ Local Development
 
+```bash
 ##### 1. Clone the repository
 git clone https://github.com/zemloai-ctrl/zemloai-api.git
+```
 
+```bash
 ##### 2. Install dependencies
 pip install -r requirements.txt
+```
 
+```bash
 ##### 3. Run the engine
 python app.py
+```
