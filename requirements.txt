@@ -5,3 +5,4 @@ supabase
 google-generativeai
 gunicorn
 python-dotenv
+google-generativeai
