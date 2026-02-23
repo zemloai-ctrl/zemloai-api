@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import time, os
 from flask_cors import CORS
 from supabase import create_client, Client
@@ -7,6 +7,7 @@ app = Flask(__name__)
 CORS(app)
 
 # --- KONFIGURAATIO ---
+# Haetaan Supabase-yhteys ympäristömuuttujista
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
@@ -51,36 +52,4 @@ def get_the_signal(origin, destination, cargo):
     seed = len(origin) + len(destination) + len(cargo)
     
     if is_domestic and not needs_customs:
-        # Lyhyen matkan paikallislogiikka (esim. 40km)
-        base_price = 45 + (seed * 2) 
-        mode = "Road (Local Van)"
-    elif is_island(origin) or is_island(destination):
-        base_price = 550 + (seed * 15)
-        mode = "Air Freight / Sea Link"
-    else:
-        base_price = 420 + (seed * 8)
-        mode = "Road / Intermodal"
-
-    if "elec" in cargo.lower(): base_price *= 1.2
-    
-    price_range = f"{int(base_price * 0.9)} - {int(base_price * 1.2)} EUR"
-
-    # 3. Checklist & Toiminnot (Placeholder affiliate-linkeille)
-    if needs_customs:
-        actions = [
-            "1. Prepare Commercial Invoice & EORI number.",
-            "2. Verify HS-codes for international shipping.",
-            "3. Action: [Get Customs Assistance] (zemlo.ai/customs-coming-soon)"
-        ]
-        risk = "High (Customs Inspection Risk)"
-    else:
-        actions = [
-            "1. Pack securely for domestic transit.",
-            "2. Check loading window (4h notice).",
-            "3. Action: [Book Local Carrier] (zemlo.ai/book-coming-soon)"
-        ]
-        risk = "Low"
-
-    return {
-        "price_estimate": price_range,
-        "
+        # Lyhyen mat
