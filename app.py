@@ -11,7 +11,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-# --- APUFUNKTIOT: MAANTIEDE & LOGIIKKA ---
+# --- APUFUNKTIOT ---
 def is_eu(city_name):
     eu_cities = ["helsinki", "tampere", "oulu", "pietarsaari", "kokkola", "tallinn", "stockholm", "berlin", "hamburg", "rotterdam", "antwerp", "budapest", "warsaw", "gdansk", "barcelona", "madrid", "paris", "le havre"]
     return any(city in city_name.lower() for city in eu_cities)
@@ -21,7 +21,6 @@ def is_island(city_name):
     return any(island in city_name.lower() for island in islands)
 
 def calculate_trust_score(reliability=0.9, speed=0.95, price_quality=0.85):
-    # Zemlo Trust Score Formula
     score = (0.4 * reliability) + (0.3 * speed) + (0.3 * price_quality)
     return int(score * 100)
 
@@ -60,29 +59,69 @@ def get_the_signal(origin, destination, cargo):
     price_range = f"{int(base_price * 0.9)} - {int(base_price * 1.2)} EUR"
 
     if needs_customs:
-        actions = [
-            "1. Prepare Commercial Invoice & EORI number.",
-            "2. Verify HS-codes for international shipping.",
-            "3. Action: [Get Customs Assistance] (https://zemlo.ai/customs)"
-        ]
-        risk = "High (Customs Inspection Risk)"
+        actions = ["1. Prepare Commercial Invoice.", "2. Verify HS-codes.", "3. Action: [Customs] (https://zemlo.ai/customs)"]
+        risk = "High (Customs)"
     else:
-        actions = [
-            "1. Pack securely for domestic transit.",
-            "2. Check loading window (4h notice).",
-            "3. Action: [Book Local Carrier] (https://zemlo.ai/book)"
-        ]
+        actions = ["1. Pack securely.", "2. Check loading window.", "3. Action: [Book] (https://zemlo.ai/book)"]
         risk = "Low"
 
     return {
         "price_estimate": price_range,
         "mode": mode,
         "trust_score": calculate_trust_score(),
-        "customs": "Required" if needs_customs else "Not Required (Internal EU)",
+        "customs": "Required" if needs_customs else "Not Required",
         "actions": actions,
         "risk": risk
     }
 
-# --- BOTTILIIKENTEEN REITIT (Tärkeät!) ---
+# --- REITIT BOTEILLE ---
+@app.route('/.well-known/ai-plugin.json')
+def serve_ai_plugin():
+    return send_from_directory(os.path.join(app.root_path, '.well-known'), 'ai-plugin.json')
 
-@app.route('/.well-known/ai-
+@app.route('/openapi.yaml')
+def serve_openapi():
+    return send_from_directory(app.root_path, 'openapi.yaml')
+
+# --- PÄÄ-ENDPOINT ---
+@app.route('/signal', methods=['GET', 'POST'])
+def get_signal():
+    start_time = time.time()
+    ua = request.headers.get('User-Agent', '')
+    data = request.get_json(silent=True) if request.method == 'POST' else request.args
+    if not data: data = {}
+
+    origin = data.get('from', 'Unknown')
+    destination = data.get('to', 'Unknown')
+    cargo = data.get('cargo', 'General Cargo')
+    caller = identify_caller(ua, data.get('bot_name'))
+    
+    s = get_the_signal(origin, destination, cargo)
+
+    if origin != 'Unknown' and supabase:
+        try:
+            supabase.table("signals").insert({
+                "origin": origin, "destination": destination, "cargo": cargo,
+                "bot_name": caller, "price_estimate": s["price_estimate"],
+                "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
+            }).execute()
+        except Exception as e: print(f"DB Error: {e}")
+
+    return jsonify({
+        "signal": {
+            "price_estimate": s["price_estimate"],
+            "transport_mode": s["mode"],
+            "trust_score": s["trust_score"],
+            "risk_analysis": s["risk"]
+        },
+        "clarification": {"checklist": s["actions"]},
+        "metadata": {"engine": "Zemlo v1.1 Action Engine", "request_by": caller}
+    })
+
+@app.route('/')
+def health():
+    return "Zemlo v1.1 Operational", 200
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
