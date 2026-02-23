@@ -11,6 +11,22 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
+# --- APUFUNKTIOT: MAANTIEDE & LOGIIKKA ---
+def is_eu(city_name):
+    eu_cities = ["helsinki", "tampere", "oulu", "pietarsaari", "kokkola", "tallinn", "stockholm", "berlin", "hamburg", "rotterdam", "antwerp", "budapest", "warsaw", "gdansk", "barcelona", "madrid", "paris", "le havre"]
+    return any(city in city_name.lower() for city in eu_cities)
+
+def is_island(city_name):
+    # Tunnistetaan saaret, joihin tarvitaan laiva/lento (esim. Tokio, Lontoo, Singapore)
+    islands = ["tokyo", "london", "singapore", "manila", "jakarta", "reykjavik"]
+    return any(island in city_name.lower() for island in islands)
+
+# --- ZEMLO TRUST SCORE ALGORITMI (v1.1) ---
+def calculate_trust_score(reliability=0.9, speed=0.95, price_quality=0.85):
+    # Kaava: (0.4 x Reliability) + (0.3 x Speed) + (0.3 x Price-quality ratio)
+    score = (0.4 * reliability) + (0.3 * speed) + (0.3 * price_quality)
+    return int(score * 100)
+
 # --- ÄLYKÄS TUNNISTUS ---
 def identify_caller(ua, provided_name):
     if provided_name: return provided_name
@@ -18,112 +34,53 @@ def identify_caller(ua, provided_name):
     if "gpt" in ua or "openai" in ua: return "ChatGPT"
     if "claude" in ua or "anthropic" in ua: return "Claude"
     if "googlebot" in ua or "gemini" in ua: return "Gemini"
-    if "bing" in ua or "edg/" in ua: return "Copilot"
-    if "python" in ua or "curl" in ua or "postman" in ua: return "Developer Script"
     if "mozilla" in ua: return "Human (Browser)"
     return "Unknown AI Agent"
 
-# --- THE SIGNAL ENGINE (Dynaaminen analyysi) ---
+# --- THE SIGNAL ENGINE v1.1 ---
 def get_the_signal(origin, destination, cargo):
-    # 1. Price Estimate
-    seed = len(origin) + len(destination) + len(cargo)
-    base = 420 + (seed * 8)
-    if "elec" in cargo.lower(): base += 210
-    low = int(base * 0.94)
-    high = int(base * 1.15)
-    price_range = f"{low} - {high} EUR"
-
-    # 2. Lead Time & Risks
-    is_non_eu = any(country in destination.lower() for country in ["serbia", "belgrade", "turkey", "istanbul", "uk", "london", "usa", "america"])
+    # 1. Reittityypin ja tullitarpeen määritys
+    origin_is_eu = is_eu(origin)
+    dest_is_eu = is_eu(destination)
+    needs_customs = not (origin_is_eu and dest_is_eu)
     
-    lead_time = "4-7 days (Realistic)" if not is_non_eu else "6-10 days (Customs delay risk)"
-    risk_level = "Medium" if is_non_eu else "Low"
-    hidden_costs = "Fuel + Export documentation fees" if is_non_eu else "Standard fuel surcharges"
+    # Suomen sisäinen vs. Kansainvälinen
+    is_domestic = ("finland" in origin.lower() or is_eu(origin)) and ("finland" in destination.lower() or is_eu(destination)) and ("kokkola" in origin.lower() or "pietarsaari" in origin.lower())
 
-    # 3. Action List (Ne 3 asiaa)
-    if is_non_eu:
+    # 2. Hintalogiikka (Korjattu Kokkola-Pietarsaari ja Tokio-Budapest)
+    seed = len(origin) + len(destination) + len(cargo)
+    
+    if is_domestic and not needs_customs:
+        # Lyhyen matkan paikallislogiikka (esim. 40km)
+        base_price = 45 + (seed * 2) 
+        mode = "Road (Local Van)"
+    elif is_island(origin) or is_island(destination):
+        base_price = 550 + (seed * 15)
+        mode = "Air Freight / Sea Link"
+    else:
+        base_price = 420 + (seed * 8)
+        mode = "Road / Intermodal"
+
+    if "elec" in cargo.lower(): base_price *= 1.2
+    
+    price_range = f"{int(base_price * 0.9)} - {int(base_price * 1.2)} EUR"
+
+    # 3. Checklist & Toiminnot (Placeholder affiliate-linkeille)
+    if needs_customs:
         actions = [
-            "1. Prepare Export Accompanying Document (EAD).",
-            "2. Verify HS-codes for non-EU customs clearance.",
-            "3. Ensure Incoterms (DAP/CPT) are clearly defined."
+            "1. Prepare Commercial Invoice & EORI number.",
+            "2. Verify HS-codes for international shipping.",
+            "3. Action: [Get Customs Assistance] (zemlo.ai/customs-coming-soon)"
         ]
+        risk = "High (Customs Inspection Risk)"
     else:
         actions = [
-            "1. Confirm CMR consignment note details.",
-            "2. Verify loading window availability.",
-            "3. Digital freight document (e-CMR) recommended."
+            "1. Pack securely for domestic transit.",
+            "2. Check loading window (4h notice).",
+            "3. Action: [Book Local Carrier] (zemlo.ai/book-coming-soon)"
         ]
+        risk = "Low"
 
     return {
         "price_estimate": price_range,
-        "hidden_costs": hidden_costs,
-        "lead_time": lead_time,
-        "risk_analysis": f"{risk_level} (Source: Zemlo Engine)",
-        "actions": actions
-    }
-
-# --- ENDPOINTIT ---
-
-@app.route('/health')
-@app.route('/')
-def health_check():
-    return "Zemlo Engine Operational", 200
-
-# Tukee nyt molempia: vanhaa /api/v1/quote ja uutta /signal
-@app.route('/api/v1/quote', methods=['GET', 'POST'])
-@app.route('/signal', methods=['GET', 'POST'])
-def get_signal():
-    start_time = time.time()
-    ua = request.headers.get('User-Agent', '')
-
-    if "Render" in ua:
-        return jsonify({"status": "standby"}), 200
-
-    if request.method == 'POST':
-        data = request.get_json(silent=True) or {}
-    else:
-        data = request.args
-
-    origin = data.get('from', 'Unknown')
-    destination = data.get('to', 'Unknown')
-    cargo = data.get('cargo', 'General Cargo')
-    
-    caller = identify_caller(ua, data.get('bot_name'))
-    is_ai = "Human" not in caller
-
-    # Generoidaan Signaali
-    signal_data = get_the_signal(origin, destination, cargo)
-
-    # TALLENNUS SUPABASEEN
-    if origin != 'Unknown' and supabase:
-        try:
-            supabase.table("signals").insert({
-                "origin": origin,
-                "destination": destination,
-                "cargo": cargo,
-                "bot_name": caller,
-                "price_estimate": signal_data["price_estimate"],
-                "type": "AI_AGENT" if is_ai else "HUMAN"
-            }).execute()
-        except Exception as e:
-            print(f"!!! DB ERROR: {str(e)}")
-
-    # PALAUTUS (The Signal Format)
-    return jsonify({
-        "signal": {
-            "price_estimate": signal_data["price_estimate"],
-            "hidden_costs": signal_data["hidden_costs"],
-            "lead_time": signal_data["lead_time"],
-            "risk_analysis": signal_data["risk_analysis"]
-        },
-        "the_action_list": signal_data["actions"],
-        "metadata": {
-            "engine": "Zemlo Clarification v1.0",
-            "request_by": caller,
-            "duration_ms": int((time.time()-start_time)*1000)
-        }
-    })
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+        "
