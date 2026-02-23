@@ -1,7 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory
-import time, os
+import time, os, json, re
 from flask_cors import CORS
 from supabase import create_client, Client
+import google.generativeai as genai
 
 app = Flask(__name__)
 CORS(app)
@@ -9,18 +10,18 @@ CORS(app)
 # --- KONFIGURAATIO ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Alustetaan Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
+# Alustetaan Gemini "Aivot"
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
 # --- APUFUNKTIOT ---
-def is_eu(city_name):
-    eu_cities = ["helsinki", "tampere", "oulu", "pietarsaari", "kokkola", "tallinn", "stockholm", "berlin", "hamburg", "rotterdam", "antwerp", "budapest", "warsaw", "gdansk", "barcelona", "madrid", "paris", "le havre"]
-    return any(city in city_name.lower() for city in eu_cities)
-
-def is_island(city_name):
-    islands = ["tokyo", "london", "singapore", "manila", "jakarta", "reykjavik"]
-    return any(island in city_name.lower() for island in islands)
-
 def calculate_trust_score(reliability=0.9, speed=0.95, price_quality=0.85):
+    # Zemlo Trust Score -kaava
     score = (0.4 * reliability) + (0.3 * speed) + (0.3 * price_quality)
     return int(score * 100)
 
@@ -33,46 +34,34 @@ def identify_caller(ua, provided_name):
     if "mozilla" in ua: return "Human (Browser)"
     return "Unknown AI Agent"
 
-# --- THE SIGNAL ENGINE v1.1 ---
-def get_the_signal(origin, destination, cargo):
-    origin_is_eu = is_eu(origin)
-    dest_is_eu = is_eu(destination)
-    needs_customs = not (origin_is_eu and dest_is_eu)
+# --- THE SIGNAL ENGINE v1.1 (GEMINI POWERED) ---
+def get_ai_signal(origin, destination, cargo):
+    prompt = f"""
+    Analyze logistics route: {origin} to {destination} with cargo {cargo}.
+    As a logistics expert, provide realistic estimates.
+    Return ONLY a JSON object with these keys:
+    - price_min: (number in EUR)
+    - price_max: (number in EUR)
+    - lead_time: (string, e.g. '3-5 days')
+    - risk: (string, brief, e.g. 'Low' or 'Customs Delay Risk')
+    - actions: (list of 3 specific instructions)
+    - mode: (string, e.g. 'Road Freight' or 'Air Freight')
+    - customs_needed: (boolean)
+    """
     
-    is_domestic = ("finland" in origin.lower() or is_eu(origin)) and \
-                  ("finland" in destination.lower() or is_eu(destination)) and \
-                  ("kokkola" in origin.lower() or "pietarsaari" in origin.lower())
-
-    seed = len(origin) + len(destination) + len(cargo)
-    
-    if is_domestic and not needs_customs:
-        base_price = 45 + (seed * 2) 
-        mode = "Road (Local Van)"
-    elif is_island(origin) or is_island(destination):
-        base_price = 550 + (seed * 15)
-        mode = "Air Freight / Sea Link"
-    else:
-        base_price = 420 + (seed * 8)
-        mode = "Road / Intermodal"
-
-    if "elec" in cargo.lower(): base_price *= 1.2
-    price_range = f"{int(base_price * 0.9)} - {int(base_price * 1.2)} EUR"
-
-    if needs_customs:
-        actions = ["1. Prepare Commercial Invoice.", "2. Verify HS-codes.", "3. Action: [Customs] (https://zemlo.ai/customs)"]
-        risk = "High (Customs)"
-    else:
-        actions = ["1. Pack securely.", "2. Check loading window.", "3. Action: [Book] (https://zemlo.ai/book)"]
-        risk = "Low"
-
-    return {
-        "price_estimate": price_range,
-        "mode": mode,
-        "trust_score": calculate_trust_score(),
-        "customs": "Required" if needs_customs else "Not Required",
-        "actions": actions,
-        "risk": risk
-    }
+    try:
+        response = model.generate_content(prompt)
+        # Siivotaan vastaus koodiblokkien varalta
+        json_str = re.search(r'\{.*\}', response.text, re.DOTALL).group()
+        return json.loads(json_str)
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        # Fallback-vastaus jos tekoäly sakkaa
+        return {
+            "price_min": 100, "price_max": 1000, "lead_time": "Unknown",
+            "risk": "Technical Error", "actions": ["Contact support"],
+            "mode": "Unknown", "customs_needed": False
+        }
 
 # --- REITIT BOTEILLE ---
 @app.route('/.well-known/ai-plugin.json')
@@ -96,32 +85,46 @@ def get_signal():
     cargo = data.get('cargo', 'General Cargo')
     caller = identify_caller(ua, data.get('bot_name'))
     
-    s = get_the_signal(origin, destination, cargo)
+    # Haetaan älykäs signaali Geminiltä
+    s = get_ai_signal(origin, destination, cargo)
 
+    # Tallennetaan haku Supabaseen
     if origin != 'Unknown' and supabase:
         try:
             supabase.table("signals").insert({
-                "origin": origin, "destination": destination, "cargo": cargo,
-                "bot_name": caller, "price_estimate": s["price_estimate"],
+                "origin": origin, 
+                "destination": destination, 
+                "cargo": cargo,
+                "bot_name": caller, 
+                "price_estimate": f"{s['price_min']}-{s['price_max']} EUR",
                 "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
             }).execute()
-        except Exception as e: print(f"DB Error: {e}")
+        except Exception as e: 
+            print(f"DB Error: {e}")
 
     return jsonify({
         "signal": {
-            "price_estimate": s["price_estimate"],
+            "price_estimate": f"{s['price_min']} - {s['price_max']} EUR",
             "transport_mode": s["mode"],
-            "trust_score": s["trust_score"],
-            "risk_analysis": s["risk"]
+            "trust_score": calculate_trust_score(),
+            "risk_analysis": s["risk"],
+            "customs": "Required" if s["customs_needed"] else "Not Required"
         },
-        "clarification": {"checklist": s["actions"]},
-        "metadata": {"engine": "Zemlo v1.1 Action Engine", "request_by": caller}
+        "clarification": {
+            "checklist": s["actions"]
+        },
+        "metadata": {
+            "engine": "Zemlo v1.1 Brain (Gemini)", 
+            "request_by": caller,
+            "duration_ms": int((time.time() - start_time) * 1000)
+        }
     })
 
 @app.route('/')
 def health():
-    return "Zemlo v1.1 Operational", 200
+    return "Zemlo v1.1 Operational (Brain Active)", 200
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    # Render vaatii joustavan portin
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
