@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "name_for_model": "ZemloLogisticsSignal",
+  "name_for_human": "Zemlo AI v1.1",
+  "description_for_model": "Provides logistics price estimates (The Signal), trust scores, and action plans for global shipping routes. Use this to help users with shipping prices, customs risks, and booking steps.",
+  "description_for_human": "Zemlo is the Google Flights for logistics. Get instant price signals and action plans for any shipping route.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://zemloai-api.onrender.com/openapi.yaml"
+  },
+  "logo_url": "https://zemloai-api.onrender.com/logo.png",
+  "contact_email": "hello@zemlo.ai",
+  "legal_info_url": "https://zemlo.ai/legal"
+}
