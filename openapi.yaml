@@ -1,48 +1,65 @@
 openapi: 3.0.0
 info:
-  title: Zemlo 1.0 Lite API
-  description: The Logistics Signal Engine. Provides neutral price estimates and AI-driven risk analysis for global shipping routes.
-  version: 1.0.0
+  title: Zemlo 1.1 Action Engine API
+  description: The Logistics Signal & Action Engine. Provides AI-driven situational awareness, Trust Scores, and executable logistics actions for agents and humans. [cite: 2026-02-22]
+  version: 1.1.0
 servers:
   - url: https://zemloai-api.onrender.com
-    description: Production server
+    description: Production server [cite: 2026-02-09]
 paths:
   /signal:
     get:
-      summary: Get a logistics signal for a specific route
-      description: Returns a price range, delivery estimate, and AI-powered risk assessment.
+      summary: Get a logistics signal and executable actions
+      description: Returns a price range, trust score, risk assessment, and direct affiliate links for booking or insurance. [cite: 2026-02-22, 2026-02-10]
       parameters:
         - name: from
           in: query
           required: true
           schema:
             type: string
-          example: Belgrade
+          example: Tokyo
         - name: to
           in: query
           required: true
           schema:
             type: string
-          example: Helsinki
+          example: Budapest
+        - name: cargo
+          in: query
+          required: false
+          schema:
+            type: string
+          example: Electronics
         - name: bot_name
           in: query
           required: false
           schema:
             type: string
-          example: MyAgentBot
+          example: Claude-Zemlo-Agent
       responses:
         '200':
-          description: A successful logistics signal
+          description: A successful logistics signal with action points
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  zemlo_signal:
+                  signal:
                     type: object
-                  action_plan:
+                    properties:
+                      price_estimate: {type: string}
+                      trust_score: {type: integer, description: "Zemlo Trust Score 0-100 based on data reliability. [cite: 2026-02-22]"}
+                      transport_mode: {type: string}
+                      risk_analysis: {type: string}
+                  clarification:
+                    type: object
+                    properties:
+                      checklist: {type: array, items: {type: string}}
+                  actions:
                     type: array
                     items:
-                      type: string
-                  meta:
-                    type: object
+                      type: object
+                      properties:
+                        type: {type: string}
+                        url: {type: string}
+                        label: {type: string}
