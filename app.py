@@ -17,7 +17,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and
 
 # Alustetaan Gemini "Aivot"
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 # --- APUFUNKTIOT ---
 def calculate_trust_score(reliability=0.9, speed=0.95, price_quality=0.85):
