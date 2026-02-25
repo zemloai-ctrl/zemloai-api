@@ -20,7 +20,7 @@ try:
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY ei ole asetettu ympäristömuuttujissa")
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash')  # [FIX 1] Oikea malli
+    model = genai.GenerativeModel('gemini-1.5-flash-8b')  # [FIX 1] Oikea malli
 except Exception as e:
     print(f"Init Error: {e}")
     model = None
