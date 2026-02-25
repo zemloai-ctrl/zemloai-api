@@ -10,63 +10,51 @@ CORS(app)
 # --- KONFIGURAATIO ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")  # Luetaan aina ympäristömuuttujasta
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # Alustetaan Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-# Alustetaan Gemini
-try:
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY ei ole asetettu ympäristömuuttujissa")
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    print(f"Init Error: {e}")
-    model = None
+def get_gemini_model():
+    """Alustaa ja palauttaa Gemini-mallin vakaasti."""
+    try:
+        if not GEMINI_API_KEY:
+            return None
+        genai.configure(api_key=GEMINI_API_KEY)
+        return genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        print(f"Gemini Init Error: {e}")
+        return None
 
 # --- APUFUNKTIOT ---
 
-# [FIX 2] Dynaaminen Trust Score
 def calculate_trust_score(cargo: str, origin: str, destination: str) -> int:
-    score = 95  # Aloituspisteet
-
-    # Vähennetään pisteitä erikoistavaroista
-    special_cargo_keywords = ["dangerous", "hazardous", "vaarallinen", "lääke", "pharma",
-                               "live", "perishable", "pilaantuva", "fragile", "hauraat",
-                               "chemical", "kemikaali", "explosives", "räjähde"]
+    score = 95
+    special_cargo_keywords = ["dangerous", "hazardous", "vaarallinen", "lääke", "pharma", "live", "perishable", "fragile", "chemical", "explosives"]
     cargo_lower = cargo.lower()
-    for keyword in special_cargo_keywords:
-        if keyword in cargo_lower:
-            score -= 15
-            break
-
-    # Vähennetään pisteitä mannertenvälisistä reiteistä
+    if any(k in cargo_lower for k in special_cargo_keywords):
+        score -= 15
+    
+    # Palautetaan mannertenvälinen tunnistus (yksinkertaistettu sanakirja)
     continents = {
-        "europe": ["finland", "germany", "france", "sweden", "norway", "uk", "poland",
-                   "suomi", "saksa", "ruotsi", "italia", "espanja"],
-        "asia": ["china", "japan", "india", "korea", "kiina", "japani", "intia"],
-        "america": ["usa", "canada", "brazil", "mexico", "yhdysvallat", "kanada"],
-        "africa": ["nigeria", "kenya", "egypt", "south africa", "egypti"],
-        "oceania": ["australia", "new zealand", "australi"],
+        "eu": ["finland", "suomi", "germany", "france", "sweden", "norway", "uk", "poland", "italy", "spain"],
+        "asia": ["china", "japan", "india", "korea", "singapore", "thailand", "vietnam"],
+        "na": ["usa", "canada", "mexico", "yhdysvallat", "kanada"],
+        "oc": ["australia", "perth", "sydney", "new zealand"]
     }
 
-    def get_continent(location: str) -> str:
-        loc = location.lower()
-        for continent, countries in continents.items():
-            if any(c in loc for c in countries):
-                return continent
+    def find_cont(loc):
+        loc = loc.lower()
+        for c, keywords in continents.items():
+            if any(k in loc for k in keywords): return c
         return "unknown"
 
-    origin_continent = get_continent(origin)
-    dest_continent = get_continent(destination)
-
-    if origin_continent != "unknown" and dest_continent != "unknown":
-        if origin_continent != dest_continent:
-            score -= 10  # Mannertenvälinen reitti
-
-    return max(0, min(100, score))  # Pidetään arvo välillä 0–100
-
+    # Jos molemmat tunnistetaan ja ovat eri mantereilla, lasketaan pisteitä
+    c1, c2 = find_cont(origin), find_cont(destination)
+    if c1 != "unknown" and c2 != "unknown" and c1 != c2:
+        score -= 10
+        
+    return max(0, min(100, score))
 
 def identify_caller(ua, provided_name):
     if provided_name: return provided_name
@@ -77,24 +65,13 @@ def identify_caller(ua, provided_name):
     if "mozilla" in ua: return "Human (Browser)"
     return "Unknown AI Agent"
 
-
-# --- THE SIGNAL ENGINE v1.2 (GEMINI POWERED) ---
+# --- THE SIGNAL ENGINE ---
 def get_ai_signal(origin, destination, cargo):
-    prompt = f"""
-    Analyze logistics route: {origin} to {destination} with cargo: {cargo}.
-    As a logistics expert, provide realistic estimates.
-    Return ONLY a valid JSON object with these exact keys:
-    - price_min: (number, EUR)
-    - price_max: (number, EUR)
-    - lead_time: (string, e.g. "3-5 business days")
-    - risk: (string, short risk assessment)
-    - actions: (list of exactly 3 specific actionable instructions as strings)
-    - mode: (string, e.g. "Air Freight", "Sea Freight", "Road Transport")
-    - customs_needed: (boolean)
-    """
+    model = get_gemini_model()
+    prompt = f"Analyze logistics route: {origin} to {destination} with cargo: {cargo}. Return ONLY valid JSON with: price_min (number), price_max (number), lead_time (string), risk (string), actions (list of 3 strings), mode (string), customs_needed (boolean)."
 
     if not model:
-        return {"error": "AI Brain not initialized"}
+        return {"error": "AI Brain Disconnected"}
 
     try:
         response = model.generate_content(
@@ -103,106 +80,70 @@ def get_ai_signal(origin, destination, cargo):
         )
         return json.loads(response.text)
     except Exception as e:
-        print(f"Gemini Error: {e}")
-        # Fallback – ei kovakoodattuja hintoja, mutta pakollinen rakenne säilyy
-        return {
-            "price_min": None, "price_max": None,
-            "lead_time": "Unavailable – contact carrier",
-            "risk": "AI analysis failed, manual review required",
-            "actions": [
-                "Contact a local freight forwarder",
-                "Verify customs documentation requirements",
-                "Confirm cargo weight and dimensions with carrier"
-            ],
-            "mode": "Unknown – manual check needed",
-            "customs_needed": True
-        }
+        print(f"Gemini Runtime Error: {e}")
+        return {"error": str(e)}
 
+# --- REITIT ---
 
-# --- REITIT BOTEILLE ---
-@app.route('/.well-known/ai-plugin.json')
-def serve_ai_plugin():
-    return send_from_directory(os.path.join(app.root_path, '.well-known'), 'ai-plugin.json')
-
-@app.route('/openapi.yaml')
-def serve_openapi():
-    return send_from_directory(app.root_path, 'openapi.yaml')
-
-
-# --- PÄÄ-ENDPOINT ---
 @app.route('/signal', methods=['GET', 'POST'])
 def get_signal():
     start_time = time.time()
     ua = request.headers.get('User-Agent', '')
+    
+    # [FIX] Datan tarkistus None-varalta
     data = request.get_json(silent=True) if request.method == 'POST' else request.args
-    if not data:
-        data = {}
-
+    if data is None: data = {}
+    
     origin = data.get('from', '').strip()
     destination = data.get('to', '').strip()
     cargo = data.get('cargo', 'General Cargo').strip()
     caller = identify_caller(ua, data.get('bot_name'))
 
-    # [FIX 3] Validointi – palautetaan 400 jos origin tai destination puuttuu
     if not origin or not destination:
-        return jsonify({
-            "error": "Missing required parameters",
-            "details": "'from' (origin) and 'to' (destination) are required fields."
-        }), 400
+        return jsonify({"error": "Missing 'from' or 'to' parameters"}), 400
 
-    # Haetaan älykäs signaali Geminiltä
     s = get_ai_signal(origin, destination, cargo)
-
-    # [FIX 5] Hinta-arvio ja checklist tulevat suoraan Geminin vastauksesta
+    is_success = "error" not in s
+    
     price_min = s.get('price_min')
     price_max = s.get('price_max')
+    price_estimate = f"{price_min} - {price_max} EUR" if is_success and price_min else "Unavailable – contact carrier"
 
-    if price_min is not None and price_max is not None:
-        price_estimate = f"{price_min} - {price_max} EUR"
-    else:
-        price_estimate = "Unavailable – contact carrier"
-
-    checklist = s.get("actions", ["Contact support for manual assessment"])
-
-    # Tallennetaan haku Supabaseen
-    if supabase:
-        try:
-            supabase.table("signals").insert({
-                "origin": origin,
-                "destination": destination,
-                "cargo": cargo,
-                "bot_name": caller,
-                "price_estimate": price_estimate,
-                "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
-            }).execute()
-        except Exception as e:
-            print(f"DB Error: {e}")
-
-    return jsonify({
+    response_data = {
         "signal": {
             "price_estimate": price_estimate,
             "transport_mode": s.get("mode", "Unknown"),
-            "trust_score": calculate_trust_score(cargo, origin, destination),  # [FIX 2] Dynaaminen
-            "risk_analysis": s.get("risk", "Analysis pending"),
-            "customs": "Required" if s.get("customs_needed") else "Not Required"
+            "trust_score": calculate_trust_score(cargo, origin, destination),
+            "risk_analysis": s.get("risk", "Manual review required"),
+            "customs": "Required" if s.get("customs_needed", True) else "Not Required"
         },
         "clarification": {
-            "checklist": checklist  # [FIX 5] Suoraan Geminiltä
+            "checklist": s.get("actions", ["Contact freight forwarder", "Verify documents", "Check dimensions"])
         },
         "metadata": {
-            "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)",
+            "engine": f"Zemlo v1.2 Brain (Gemini 1.5 Flash)" if is_success else f"Zemlo v1.2 (Fallback: {s.get('error')})",
             "request_by": caller,
             "duration_ms": int((time.time() - start_time) * 1000)
         }
-    })
+    }
 
+    # [FIX] Supabase-lokitus virheille
+    if supabase:
+        try:
+            supabase.table("signals").insert({
+                "origin": origin, "destination": destination, "cargo": cargo,
+                "bot_name": caller, "price_estimate": price_estimate,
+                "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
+            }).execute()
+        except Exception as e:
+            print(f"Supabase DB Error: {e}")
+
+    return jsonify(response_data)
 
 @app.route('/')
 def health():
-    return "Zemlo v1.2 Operational (Brain Active)", 200
-
+    return "Zemlo v1.2 Operational", 200
 
 if __name__ == "__main__":
-    # Render vaatii portin ja hostin määrittelyn näin:
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
