@@ -16,8 +16,12 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 # Alustetaan Gemini "Aivot"
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-2.0-flash')
+except Exception as e:
+    print(f"Init Error: {e}")
+    model = None
 
 # --- APUFUNKTIOT ---
 def calculate_trust_score(reliability=0.9, speed=0.95, price_quality=0.85):
