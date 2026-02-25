@@ -19,7 +19,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and
 try:
     genai.configure(api_key=GEMINI_API_KEY)
     # Käytetään -latest versiota parhaan yhteensopivuuden takaamiseksi
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     print(f"Init Error: {e}")
     model = None
