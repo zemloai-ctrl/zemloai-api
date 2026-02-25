@@ -2,6 +2,6 @@ flask
 flask-cors
 requests
 supabase
-google-generativeai>=0.8.0
+google-generativeai>=0.8.3
 gunicorn
 python-dotenv
