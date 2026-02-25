@@ -128,7 +128,8 @@ def get_signal():
 def health():
     return "Zemlo v1.1 Operational (Brain Active)", 200
 
+# Poista tai kommentoi ulos se if __name__ == "__main__" blokki kokonaan
+# Ja varmista että tiedoston lopussa on vain tämä:
+
 if __name__ == "__main__":
-    # Render vaatii joustavan portin
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run()
