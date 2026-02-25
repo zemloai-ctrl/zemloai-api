@@ -18,7 +18,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and
 # Alustetaan Gemini "Aivot"
 try:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    # Käytetään -latest versiota parhaan yhteensopivuuden takaamiseksi
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 except Exception as e:
     print(f"Init Error: {e}")
     model = None
@@ -44,27 +45,32 @@ def get_ai_signal(origin, destination, cargo):
     Analyze logistics route: {origin} to {destination} with cargo {cargo}.
     As a logistics expert, provide realistic estimates.
     Return ONLY a JSON object with these keys:
-    - price_min: (number in EUR)
-    - price_max: (number in EUR)
-    - lead_time: (string, e.g. '3-5 days')
-    - risk: (string, brief, e.g. 'Low' or 'Customs Delay Risk')
+    - price_min: (number)
+    - price_max: (number)
+    - lead_time: (string)
+    - risk: (string)
     - actions: (list of 3 specific instructions)
-    - mode: (string, e.g. 'Road Freight' or 'Air Freight')
+    - mode: (string)
     - customs_needed: (boolean)
     """
     
+    if not model:
+        return {"error": "AI Brain not initialized"}
+
     try:
-        response = model.generate_content(prompt)
-        # Siivotaan vastaus koodiblokkien varalta
-        json_str = re.search(r'\{.*\}', response.text, re.DOTALL).group()
-        return json.loads(json_str)
+        # Pakotetaan Gemini vastaamaan puhtaalla JSONilla
+        response = model.generate_content(
+            prompt, 
+            generation_config={"response_mime_type": "application/json"}
+        )
+        return json.loads(response.text)
     except Exception as e:
         print(f"Gemini Error: {e}")
-        # Fallback-vastaus jos tekoäly sakkaa
+        # Fallback-vastaus
         return {
-            "price_min": 100, "price_max": 1000, "lead_time": "Unknown",
-            "risk": "Technical Error", "actions": ["Contact support"],
-            "mode": "Unknown", "customs_needed": False
+            "price_min": 150, "price_max": 1200, "lead_time": "Check from carrier",
+            "risk": "Data unavailable", "actions": ["Contact local forwarder", "Check customs docs", "Verify cargo weight"],
+            "mode": "Standard Freight", "customs_needed": True
         }
 
 # --- REITIT BOTEILLE ---
@@ -100,7 +106,7 @@ def get_signal():
                 "destination": destination, 
                 "cargo": cargo,
                 "bot_name": caller, 
-                "price_estimate": f"{s['price_min']}-{s['price_max']} EUR",
+                "price_estimate": f"{s.get('price_min', 0)}-{s.get('price_max', 0)} EUR",
                 "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
             }).execute()
         except Exception as e: 
@@ -108,14 +114,14 @@ def get_signal():
 
     return jsonify({
         "signal": {
-            "price_estimate": f"{s['price_min']} - {s['price_max']} EUR",
-            "transport_mode": s["mode"],
+            "price_estimate": f"{s.get('price_min', 0)} - {s.get('price_max', 0)} EUR",
+            "transport_mode": s.get("mode", "Unknown"),
             "trust_score": calculate_trust_score(),
-            "risk_analysis": s["risk"],
-            "customs": "Required" if s["customs_needed"] else "Not Required"
+            "risk_analysis": s.get("risk", "Analysis pending"),
+            "customs": "Required" if s.get("customs_needed") else "Not Required"
         },
         "clarification": {
-            "checklist": s["actions"]
+            "checklist": s.get("actions", ["Contact support"])
         },
         "metadata": {
             "engine": "Zemlo v1.1 Brain (Gemini)", 
@@ -128,8 +134,6 @@ def get_signal():
 def health():
     return "Zemlo v1.1 Operational (Brain Active)", 200
 
-# Poista tai kommentoi ulos se if __name__ == "__main__" blokki kokonaan
-# Ja varmista että tiedoston lopussa on vain tämä:
-
+# Render hoitaa käynnistyksen Gunicornin kautta, joten app.run() riittää lokaaliin testaukseen
 if __name__ == "__main__":
     app.run()
