@@ -1,9 +1,7 @@
 from flask import Flask, request, jsonify
-import time, os, json
+import time, os, json, requests
 from flask_cors import CORS
 from supabase import create_client, Client
-import google.generativeai as genai
-from google.generativeai.types import RequestOptions
 
 app = Flask(__name__)
 CORS(app)
@@ -15,15 +13,6 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-def get_gemini_model():
-    try:
-        if not GEMINI_API_KEY: return None
-        genai.configure(api_key=GEMINI_API_KEY)
-        return genai.GenerativeModel('gemini-1.5-flash')
-    except Exception as e:
-        print(f"Gemini Init Error: {e}")
-        return None
-
 def identify_caller(ua, provided_name):
     if provided_name: return provided_name
     ua = ua.lower()
@@ -32,8 +21,13 @@ def identify_caller(ua, provided_name):
     return "Human (Browser)"
 
 def get_ai_signal(origin, destination, cargo):
-    model = get_gemini_model()
-    # Pyydetään AI:lta kaikki tarvittava data kerralla, mukaan lukien Trust Score -arvio
+    if not GEMINI_API_KEY:
+        return {"error": "API Key Missing"}
+
+    # SUORA REITTI: Käytetään Gemini 2 Flashia ja vakaata v1-rajapintaa
+    # Tämä ohittaa kaikki kirjastovirheet ja api_version-ongelmat
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    
     prompt = f"""
     Analyze logistics route: {origin} to {destination} with cargo: {cargo}.
     Return ONLY valid JSON with:
@@ -47,18 +41,20 @@ def get_ai_signal(origin, destination, cargo):
     - is_intercontinental: (boolean)
     """
 
-    if not model: return {"error": "AI Brain Disconnected"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"response_mime_type": "application/json"}
+    }
 
     try:
-        # Pakotetaan v1-versio poistamaan 404-virheet
-        response = model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"},
-            request_options=RequestOptions(api_version='v1')
-        )
-        return json.loads(response.text)
+        response = requests.post(url, json=payload, timeout=30)
+        if response.status_code != 200:
+            return {"error": f"Google API Error {response.status_code}"}
+            
+        data = response.json()
+        content = data['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(content)
     except Exception as e:
-        print(f"Gemini Runtime Error: {e}")
         return {"error": str(e)}
 
 @app.route('/signal', methods=['GET', 'POST'])
@@ -79,7 +75,7 @@ def get_signal():
     s = get_ai_signal(origin, destination, cargo)
     is_success = "error" not in s
     
-    # Lasketaan Trust Score dynaamisesti AI:n havaintojen perusteella
+    # Trust Score laskenta
     trust_score = 95
     if is_success:
         if s.get("is_intercontinental"): trust_score -= 10
@@ -101,7 +97,7 @@ def get_signal():
             "checklist": s.get("actions", ["Contact freight forwarder", "Verify documents", "Check dimensions"])
         },
         "metadata": {
-            "engine": f"Zemlo v1.2 Brain" if is_success else f"Zemlo v1.2 (Fallback: {s.get('error')})",
+            "engine": "Zemlo v1.2 Brain (Gemini 2 Flash)" if is_success else f"Zemlo v1.2 (Fallback: {s.get('error')})",
             "request_by": caller,
             "duration_ms": int((time.time() - start_time) * 1000)
         }
