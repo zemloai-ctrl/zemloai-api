@@ -30,15 +30,18 @@ def get_ai_signal(origin, destination, cargo):
     
     prompt = f"""
     Analyze logistics route: {origin} to {destination} with cargo: {cargo}.
-    Return ONLY valid JSON with:
-    - price_min: (number, EUR)
-    - price_max: (number, EUR)
-    - lead_time: (string)
-    - risk: (string)
+    As Zemlo AI, provide a realistic situational awareness estimate.
+    Return ONLY valid JSON:
+    - price_min: (integer, EUR)
+    - price_max: (integer, EUR)
+    - lead_time: (string, e.g. '3-5 days')
+    - risk: (string, brief analysis)
     - actions: (list of 3 strings)
-    - mode: (string)
+    - mode: (string, e.g. 'Sea Freight')
     - customs_needed: (boolean)
     - is_intercontinental: (boolean)
+    
+    If exact data is unavailable, use your logistics knowledge to provide a professional estimate.
     """
 
     payload = {
