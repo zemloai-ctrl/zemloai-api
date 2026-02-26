@@ -42,14 +42,11 @@ def get_ai_signal(origin, destination, cargo):
     """
 
     # TÄRKEÄÄ: Gemini 2 vaatii 'role': 'user' -määrittelyn
-    payload = {
+payload = {
         "contents": [{
             "role": "user",
             "parts": [{"text": prompt}]
-        }],
-        "generationConfig": {
-            "responseMimeType": "application/json"
-        }
+        }]
     }
 
     try:
