@@ -1,24 +1,11 @@
 from flask import Flask, request, jsonify
 import time, os, json, requests
 from flask_cors import CORS
-from supabase import create_client, Client
 
 app = Flask(__name__)
 CORS(app)
 
-# --- KONFIGURAATIO ---
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
-
-def identify_caller(ua, provided_name):
-    if provided_name: return provided_name
-    ua = ua.lower()
-    if any(bot in ua for bot in ["gpt", "openai", "claude", "anthropic", "googlebot", "gemini"]):
-        return "AI Agent"
-    return "Human (Browser)"
 
 def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
@@ -26,108 +13,74 @@ def get_ai_signal(origin, destination, cargo):
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
+    # TIUKKA PROMPT: Pakotetaan vastaus oikeaan muotoon
     prompt = f"""
-    Act as Zemlo Logistics AI. Analyze: {origin} to {destination}, cargo: {cargo}.
-    Provide a professional situational awareness estimate. 
-    Return ONLY valid JSON:
-    - price_min: (number, e.g. 350)
-    - price_max: (number, e.g. 750)
-    - lead_time: (string, e.g. '4-7 days')
-    - risk: (string, brief risk analysis)
-    - actions: (list of 3 strings)
-    - mode: (string, e.g. 'Road Freight')
-    - customs_needed: (boolean)
-    - is_intercontinental: (boolean)
-
-    CRITICAL: Do not provide ranges as strings in prices. Use only numbers. 
-    If you are unsure, provide your best logistics-based estimate.
+    Return ONLY JSON for logistics route {origin} to {destination} ({cargo}).
+    JSON structure:
+    {{
+      "price_min": number,
+      "price_max": number,
+      "lead_time": "string",
+      "risk": "string",
+      "actions": ["string", "string", "string"],
+      "mode": "string",
+      "customs_needed": boolean
+    }}
     """
 
-    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     try:
-        response = requests.post(url, json=payload, timeout=30)
-        if response.status_code != 200:
-            return {"error": f"API Error: {response.status_code}"}
-            
+        response = requests.post(url, json=payload, timeout=10)
         data = response.json()
-        content = data['candidates'][0]['content']['parts'][0]['text']
-        content = content.replace("```json", "").replace("```", "").strip()
-        return json.loads(content)
-    except Exception as e:
-        return {"error": str(e)}
+        raw_text = data['candidates'][0]['content']['parts'][0]['text']
+        # Siivous jos AI laittaa markdownia
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_json)
+    except:
+        return None
 
 @app.route('/signal', methods=['GET', 'POST'])
 def get_signal():
     start_time = time.time()
-    ua = request.headers.get('User-Agent', '')
     data = request.get_json(silent=True) if request.method == 'POST' else request.args
-    if data is None: data = {}
     
-    origin = data.get('from', '').strip()
-    destination = data.get('to', '').strip()
-    cargo = data.get('cargo', 'General Cargo').strip()
-    caller = identify_caller(ua, data.get('bot_name'))
+    origin = data.get('from', 'Unknown')
+    destination = data.get('to', 'Unknown')
+    cargo = data.get('cargo', 'General Cargo')
 
-    if not origin or not destination:
-        return jsonify({"error": "Missing params"}), 400
+    ai_data = get_ai_signal(origin, destination, cargo)
 
-    s = get_ai_signal(origin, destination, cargo)
-    
-    # RAKENNETAAN SIGNAALI - The Intelligence Patch
-    s = get_ai_signal(origin, destination, cargo)
-    is_ai_success = "error" not in s
-    
-    # 1. Hinta
-    p_min = s.get('price_min')
-    p_max = s.get('price_max')
-    if p_min and p_max:
-        price_estimate = f"{p_min} - {p_max} EUR"
+    # JOS AI ONNISTUI, KÄYTETÄÄN SEN DATAA. JOS EI, KÄYTETÄÄN VARALUULOA.
+    if ai_data and isinstance(ai_data, dict):
+        p_min = ai_data.get('price_min', 200)
+        p_max = ai_data.get('price_max', 600)
+        customs = "Required" if ai_data.get('customs_needed') else "Not Required"
+        risk = ai_data.get('risk', "Standard route")
+        mode = ai_data.get('mode', "Road Freight")
+        actions = ai_data.get('actions', ["Check docs", "Verify weight", "Book space"])
     else:
-        price_estimate = s.get('price_estimate', "250 - 650 EUR (Est.)")
+        # TÄMÄ ON SE FALLBACK JOKA SULLA NYT NÄKYY - POISTETAAN SE AI-DATAN TIESTÄ
+        p_min, p_max = 0, 0
+        customs, risk, mode, actions = "Unknown", "Analysis failed", "Unknown", []
 
-    # 2. Tullit ja riskit (Annetaan AI:n päättää)
-    customs_val = "Required" if s.get("customs_needed") else "Not Required"
-    # Jos reitti on EU:n ulkopuolelle, pakotetaan tulli jos AI epäröi
-    if "serbia" in origin.lower() or "serbia" in destination.lower():
-        customs_val = "Required"
-
-    response_data = {
-        "signal": {
-            "price_estimate": price_estimate,
-            "transport_mode": s.get("mode", "Road Freight"),
-            "trust_score": max(0, min(100, 95 if is_ai_success else 70)),
-            "risk_analysis": s.get("risk", "Standard transit risks"),
-            "customs": customs_val
-        },
-        "clarification": {
-            "checklist": s.get("actions", ["Check customs docs", "Verify cargo dimensions", "Contact carrier"])
-        },
-        "metadata": {
-            "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)",
-            "request_by": caller,
-            "duration_ms": int((time.time() - start_time) * 1000)
-        }
-    }
-
-    trust_score = 95
-    if s.get("is_intercontinental"): trust_score -= 10
-    if any(k in cargo.lower() for k in ["dangerous", "pharma"]): trust_score -= 15
+    # Pakotetaan tulli Belgradille jos AI epäröi
+    if "belgrade" in origin.lower() or "serbia" in origin.lower():
+        customs = "Required"
 
     response_data = {
         "signal": {
-            "price_estimate": price_estimate,
-            "transport_mode": s.get("mode", "Standard Freight"),
-            "trust_score": max(0, min(100, trust_score)),
-            "risk_analysis": s.get("risk", "Low predictability"),
-            "customs": "Required" if s.get("customs_needed") else "Not Required"
+            "price_estimate": f"{p_min} - {p_max} EUR" if p_min > 0 else "Estimate unavailable",
+            "transport_mode": mode,
+            "trust_score": 85 if ai_data else 50,
+            "risk_analysis": risk,
+            "customs": customs
         },
         "clarification": {
-            "checklist": s.get("actions", ["Contact Zemlo partner", "Verify docs"])
+            "checklist": actions
         },
         "metadata": {
-            "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)",
-            "request_by": caller,
+            "engine": "Zemlo v1.2 Brain",
             "duration_ms": int((time.time() - start_time) * 1000)
         }
     }
@@ -135,7 +88,7 @@ def get_signal():
     return jsonify(response_data)
 
 @app.route('/')
-def health(): return "Zemlo v1.2 Operational", 200
+def health(): return "Zemlo Operational", 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
