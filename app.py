@@ -25,8 +25,8 @@ def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
         return {"error": "API Key Missing"}
 
-    # SUORA REITTI: Käytetään Gemini 1.5 Flashia (vakaampi v1-endpoint)
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # Vakaa osoite: v1beta ja Gemini 1.5 Flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
     Analyze logistics route: {origin} to {destination} with cargo: {cargo}.
@@ -56,10 +56,10 @@ def get_ai_signal(origin, destination, cargo):
             
         data = response.json()
         
-        # Kaivetaan teksti ulos Googlen rakenteesta
+        # Kaivetaan teksti ulos
         content = data['candidates'][0]['content']['parts'][0]['text']
         
-        # Siivotaan mahdolliset markdown-koodiblokit pois
+        # Siivotaan markdown-koodiblokit pois
         content = content.replace("```json", "").replace("```", "").strip()
         
         return json.loads(content)
@@ -72,7 +72,7 @@ def get_signal():
     start_time = time.time()
     ua = request.headers.get('User-Agent', '')
     
-    # Käsitellään sekä GET että POST parametrit
+    # Käsitellään parametrit
     data = request.get_json(silent=True) if request.method == 'POST' else request.args
     if data is None: data = {}
     
@@ -88,7 +88,7 @@ def get_signal():
     s = get_ai_signal(origin, destination, cargo)
     is_success = "error" not in s
     
-    # Lasketaan Trust Score dynaamisesti (Zemlo AI v1.1 logiikka)
+    # Lasketaan Trust Score
     trust_score = 95
     if is_success:
         if s.get("is_intercontinental"): trust_score -= 10
@@ -96,9 +96,9 @@ def get_signal():
 
     price_min = s.get('price_min')
     price_max = s.get('price_max')
-    price_estimate = f"{price_min} - {price_max} EUR" if is_success and price_min else "Unavailable – contact carrier"
+    price_estimate = f"{price_min} - {price_max} EUR" if is_success and price_min else "Unavailable"
 
-    # Rakennetaan Zemlo-standardin mukainen vastaus
+    # Rakennetaan vastaus
     response_data = {
         "signal": {
             "price_estimate": price_estimate,
@@ -111,13 +111,13 @@ def get_signal():
             "checklist": s.get("actions", ["Contact freight forwarder", "Verify documents", "Check dimensions"])
         },
         "metadata": {
-            "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)" if is_success else f"Zemlo v1.2 (Fallback: {s.get('error')})",
+            "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)",
             "request_by": caller,
             "duration_ms": int((time.time() - start_time) * 1000)
         }
     }
 
-    # Tallennus Supabaseen jos käytössä
+    # Tallennus Supabaseen
     if supabase:
         try:
             supabase.table("signals").insert({
@@ -125,8 +125,8 @@ def get_signal():
                 "bot_name": caller, "price_estimate": price_estimate,
                 "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
             }).execute()
-        except Exception as e: 
-            print(f"DB Error: {e}")
+        except: 
+            pass
 
     return jsonify(response_data)
 
