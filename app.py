@@ -25,9 +25,8 @@ def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
         return {"error": "API Key Missing"}
 
-    # SUORA REITTI: Käytetään Gemini 2.0 Flashia ja v1beta-endpointia
-    # Tämä on tällä hetkellä vakain tapa saada Gemini 2:lta puhdasta JSONia
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    # SUORA REITTI: Käytetään Gemini 1.5 Flashia (vakaampi kiintiö)
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
     Analyze logistics route: {origin} to {destination} with cargo: {cargo}.
