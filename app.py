@@ -5,77 +5,56 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# Haetaan se avain - varmista että Renderissä nimi on täsmälleen tämä
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
-        return None
+        return {"error": "API_KEY_MISSING"}
 
-    # Käytetään varminta mahdollista endpointia
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    # Primitivinen ja raaka prompti - ei selityksiä AI:lle
-    prompt = f"Provide logistics estimate for {origin} to {destination}, cargo {cargo}. Return ONLY JSON: {{\"price_min\": 100, \"price_max\": 200, \"lead_time\": \"text\", \"risk\": \"text\", \"actions\": [\"a\", \"b\", \"c\"], \"mode\": \"text\", \"customs_needed\": true}}"
-
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
+    prompt = f"Return ONLY JSON for logistics {origin} to {destination} ({cargo}). Format: {{\"p_min\": 100, \"p_max\": 200, \"mode\": \"text\", \"customs\": true}}"
 
     try:
-        # Pidennetty timeout varmuuden vuoksi
-        response = requests.post(url, json=payload, timeout=20)
-        data = response.json()
+        # TÄMÄ ON SE RATKAISU: Ei rooleja, vain puhdas sisältö
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        response = requests.post(url, json=payload, timeout=15)
         
-        # Haetaan raakateksti
-        raw_text = data['candidates'][0]['content']['parts'][0]['text']
-        
-        # Pakotettu siivous koodiblokkien varalta
-        if "```" in raw_text:
-            raw_text = raw_text.split("```")[1].replace("json", "").strip()
-        
-        return json.loads(raw_text)
+        if response.status_code != 200:
+            return {"error": f"HTTP_{response.status_code}", "msg": response.text}
+            
+        res_data = response.json()
+        raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_json)
     except Exception as e:
-        # Jos tämä failaa, se palauttaa virheen suoraan vastaukseen, jotta tiedät miksi
-        return {"debug_error": str(e)}
+        return {"error": "EXCEPTION", "msg": str(e)}
 
 @app.route('/signal', methods=['GET', 'POST'])
 def get_signal():
     start_time = time.time()
-    
-    # Parametrit sisään
-    if request.method == 'POST':
-        data = request.get_json(silent=True) or {}
-    else:
-        data = request.args
+    data = request.get_json(silent=True) if request.method == 'POST' else request.args
     
     origin = data.get('from', 'Helsinki')
-    destination = data.get('to', 'Tallinn')
-    cargo = data.get('cargo', 'General Cargo')
+    dest = data.get('to', 'Tallinn')
+    cargo = data.get('cargo', 'General')
 
-    # Aivojen kutsu
-    ai_data = get_ai_signal(origin, destination, cargo)
+    ai = get_ai_signal(origin, dest, cargo)
 
-    # Jos AI vastaa, käytetään lukuja. Jos ei, näytetään virhe.
-    if ai_data and "price_min" in ai_data:
-        p_min = ai_data.get('price_min')
-        p_max = ai_data.get('price_max')
-        customs_needed = ai_data.get('customs_needed', False)
-        risk = ai_data.get('risk', "Standard")
-        mode = ai_data.get('mode', "Freight")
-        actions = ai_data.get('actions', [])
+    # JOS AI FAILAA, NÄYTETÄÄN SE SUORAAN - EI FALLBACKIA
+    if ai and "error" not in ai:
+        p_min = ai.get('p_min', 0)
+        p_max = ai.get('p_max', 0)
+        customs_needed = ai.get('customs', False)
+        risk = "AI Analysis OK"
+        mode = ai.get('mode', "Freight")
         trust = 100
     else:
-        # JOS TÄMÄ TULEE RUUTUUN, AI-YHTEYS ON POIKKI TAI AVAIN VÄÄRÄ
+        # TÄMÄ PALJASTAA VIAN
         p_min, p_max = "ERR", "ERR"
+        risk = f"FAIL: {ai.get('error') if ai else 'TIMEOUT'} - {ai.get('msg') if ai else ''}"
         customs_needed = False
-        risk = f"FAILED: {ai_data.get('debug_error') if ai_data else 'Timeout'}"
         mode = "ERROR"
-        actions = ["CHECK API KEY", "CHECK LOGS"]
         trust = 0
-
-    # Zemlo-logiikka: Serbia vaatii aina tullin
-    customs_status = "Required" if customs_needed or "serbia" in origin.lower() or "belgrade" in origin.lower() else "Not Required"
 
     return jsonify({
         "signal": {
@@ -83,17 +62,10 @@ def get_signal():
             "transport_mode": mode,
             "trust_score": trust,
             "risk_analysis": risk,
-            "customs": customs_status
+            "customs": "Required" if customs_needed or "serbia" in origin.lower() else "Not Required"
         },
-        "clarification": { "checklist": actions },
-        "metadata": {
-            "engine": "Zemlo v1.2 Brain",
-            "duration_ms": int((time.time() - start_time) * 1000)
-        }
+        "metadata": { "duration_ms": int((time.time() - start_time) * 1000) }
     })
-
-@app.route('/')
-def health(): return "Zemlo UP", 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
