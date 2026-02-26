@@ -29,19 +29,19 @@ def get_ai_signal(origin, destination, cargo):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
-    Analyze logistics route: {origin} to {destination} with cargo: {cargo}.
-    As Zemlo AI, provide a realistic situational awareness estimate.
+    Act as Zemlo Logistics AI. Analyze: {origin} to {destination}, cargo: {cargo}.
+    Your goal is situational awareness, not perfection.
     Return ONLY valid JSON:
-    - price_min: (integer, EUR)
-    - price_max: (integer, EUR)
+    - price_min: (number, EUR, e.g. 200)
+    - price_max: (number, EUR, e.g. 500)
     - lead_time: (string, e.g. '3-5 days')
-    - risk: (string, brief analysis)
+    - risk: (string, e.g. 'Low risk route')
     - actions: (list of 3 strings)
-    - mode: (string, e.g. 'Sea Freight')
+    - mode: (string, e.g. 'Road Freight')
     - customs_needed: (boolean)
     - is_intercontinental: (boolean)
     
-    If exact data is unavailable, use your logistics knowledge to provide a professional estimate.
+    CRITICAL: Provide your best professional estimate. Do not return null or unknown.
     """
 
     payload = {
