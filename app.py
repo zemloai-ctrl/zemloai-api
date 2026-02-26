@@ -11,7 +11,6 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Alustetaan Supabase vain jos tunnukset löytyvät
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 def identify_caller(ua, provided_name):
@@ -25,48 +24,36 @@ def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
         return {"error": "API Key Missing"}
 
-    # Vakaa osoite: v1beta ja Gemini 1.5 Flash
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
     Act as Zemlo Logistics AI. Analyze: {origin} to {destination}, cargo: {cargo}.
-    Your goal is situational awareness, not perfection.
+    Provide a professional situational awareness estimate. 
     Return ONLY valid JSON:
-    - price_min: (number, EUR, e.g. 200)
-    - price_max: (number, EUR, e.g. 500)
-    - lead_time: (string, e.g. '3-5 days')
-    - risk: (string, e.g. 'Low risk route')
+    - price_min: (number, e.g. 350)
+    - price_max: (number, e.g. 750)
+    - lead_time: (string, e.g. '4-7 days')
+    - risk: (string, brief risk analysis)
     - actions: (list of 3 strings)
     - mode: (string, e.g. 'Road Freight')
     - customs_needed: (boolean)
     - is_intercontinental: (boolean)
-    
-    CRITICAL: Provide your best professional estimate. Do not return null or unknown.
+
+    CRITICAL: Do not provide ranges as strings in prices. Use only numbers. 
+    If you are unsure, provide your best logistics-based estimate.
     """
 
-    payload = {
-        "contents": [{
-            "role": "user",
-            "parts": [{"text": prompt}]
-        }]
-    }
+    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
 
     try:
         response = requests.post(url, json=payload, timeout=30)
-        
         if response.status_code != 200:
-            return {"error": f"Google API Error {response.status_code}: {response.text}"}
+            return {"error": f"API Error: {response.status_code}"}
             
         data = response.json()
-        
-        # Kaivetaan teksti ulos
         content = data['candidates'][0]['content']['parts'][0]['text']
-        
-        # Siivotaan markdown-koodiblokit pois
         content = content.replace("```json", "").replace("```", "").strip()
-        
         return json.loads(content)
-        
     except Exception as e:
         return {"error": str(e)}
 
@@ -74,8 +61,6 @@ def get_ai_signal(origin, destination, cargo):
 def get_signal():
     start_time = time.time()
     ua = request.headers.get('User-Agent', '')
-    
-    # Käsitellään parametrit
     data = request.get_json(silent=True) if request.method == 'POST' else request.args
     if data is None: data = {}
     
@@ -85,33 +70,34 @@ def get_signal():
     caller = identify_caller(ua, data.get('bot_name'))
 
     if not origin or not destination:
-        return jsonify({"error": "Missing 'from' or 'to' parameters"}), 400
+        return jsonify({"error": "Missing params"}), 400
 
-    # Haetaan tekoälysignaali
     s = get_ai_signal(origin, destination, cargo)
-    is_success = "error" not in s
     
-    # Lasketaan Trust Score
+    # RAKENNETAAN SIGNAALI HUOLELLISESTI
+    p_min = s.get('price_min')
+    p_max = s.get('price_max')
+    
+    if p_min and p_max:
+        price_estimate = f"{p_min} - {p_max} EUR"
+    else:
+        # Fallback jos AI silti sekoilee
+        price_estimate = s.get('price_estimate', "Check manual pricing")
+
     trust_score = 95
-    if is_success:
-        if s.get("is_intercontinental"): trust_score -= 10
-        if any(k in cargo.lower() for k in ["dangerous", "pharma", "fragile"]): trust_score -= 15
+    if s.get("is_intercontinental"): trust_score -= 10
+    if any(k in cargo.lower() for k in ["dangerous", "pharma"]): trust_score -= 15
 
-    price_min = s.get('price_min')
-    price_max = s.get('price_max')
-    price_estimate = f"{price_min} - {price_max} EUR" if is_success and price_min else "Unavailable"
-
-    # Rakennetaan vastaus
     response_data = {
         "signal": {
             "price_estimate": price_estimate,
-            "transport_mode": s.get("mode", "Unknown"),
+            "transport_mode": s.get("mode", "Standard Freight"),
             "trust_score": max(0, min(100, trust_score)),
-            "risk_analysis": s.get("risk", "Manual review required"),
-            "customs": "Required" if s.get("customs_needed", True) else "Not Required"
+            "risk_analysis": s.get("risk", "Low predictability"),
+            "customs": "Required" if s.get("customs_needed") else "Not Required"
         },
         "clarification": {
-            "checklist": s.get("actions", ["Contact freight forwarder", "Verify documents", "Check dimensions"])
+            "checklist": s.get("actions", ["Contact Zemlo partner", "Verify docs"])
         },
         "metadata": {
             "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)",
@@ -120,22 +106,10 @@ def get_signal():
         }
     }
 
-    # Tallennus Supabaseen
-    if supabase:
-        try:
-            supabase.table("signals").insert({
-                "origin": origin, "destination": destination, "cargo": cargo,
-                "bot_name": caller, "price_estimate": price_estimate,
-                "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
-            }).execute()
-        except: 
-            pass
-
     return jsonify(response_data)
 
 @app.route('/')
-def health(): 
-    return "Zemlo v1.2 Operational", 200
+def health(): return "Zemlo v1.2 Operational", 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
