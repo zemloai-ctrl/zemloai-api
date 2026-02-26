@@ -11,22 +11,21 @@ def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
         return {"error": "API_KEY_MISSING"}
 
-    # VUODEN 2026 VARMIN ENDPOINT (v1)
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # VUODEN 2026 TUOREIN: Gemini 2.5 Flash
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"Return ONLY JSON for logistics {origin} to {destination} ({cargo}). Format: {{\"p_min\": 100, \"p_max\": 200, \"mode\": \"text\", \"customs\": true, \"risk\": \"text\", \"actions\": [\"a\", \"b\"]}}"
-
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     try:
         response = requests.post(url, json=payload, timeout=12)
         
-        # Jos tulee 404 tai muu virhe, ei mennä suoraan except-lohkoon vaan luetaan syy
         if response.status_code != 200:
             return {"error": f"HTTP_{response.status_code}", "msg": response.text}
             
         data = response.json()
         raw_text = data['candidates'][0]['content']['parts'][0]['text']
+        # Siivotaan markdown-koodiblokit pois jos AI niitä tarjoaa
         clean_json = raw_text.replace("```json", "").replace("```", "").strip()
         return json.loads(clean_json)
     except Exception as e:
@@ -36,7 +35,6 @@ def get_ai_signal(origin, destination, cargo):
 def get_signal():
     start_time = time.time()
     
-    # Haetaan parametrit
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
     else:
@@ -48,26 +46,23 @@ def get_signal():
 
     ai = get_ai_signal(origin, dest, cargo)
 
-    # Jos AI onnistui (p_min löytyy vastauksesta)
     if ai and "p_min" in ai:
-        p_min = ai.get('p_min')
-        p_max = ai.get('p_max')
+        p_min, p_max = ai.get('p_min'), ai.get('p_max')
         mode = ai.get('mode', "Freight")
-        risk = ai.get('risk', "Analysis OK")
-        actions = ai.get('actions', ["Check documents"])
+        risk = ai.get('risk', "AI Analysis Success")
+        actions = ai.get('actions', ["Check docs"])
         customs_needed = ai.get('customs', False)
-        trust = 90
+        trust = 100
     else:
-        # TÄMÄ PALJASTAA VIAN (jos esim. API-avain ei toimi)
         p_min, p_max = "ERR", "ERR"
         mode = "ERROR"
         risk = f"FAIL: {ai.get('error') if ai else 'Unknown'}"
-        actions = ["Check API Key in Render Settings", "Verify Google Billing"]
+        actions = ["Check Google AI Studio for Gemini 2.5 status"]
         customs_needed = False
         trust = 0
 
     # Serbia-pakotus
-    is_serbia = "serbia" in origin.lower() or "belgrade" in origin.lower() or "serbia" in dest.lower()
+    is_serbia = any(x in origin.lower() or x in dest.lower() for x in ["serbia", "belgrade"])
     customs_str = "Required" if customs_needed or is_serbia else "Not Required"
 
     return jsonify({
@@ -80,7 +75,7 @@ def get_signal():
         },
         "clarification": { "checklist": actions },
         "metadata": {
-            "engine": "Zemlo v1.2 Brain",
+            "engine": "Zemlo v1.2 (Gemini 2.5 Flash)",
             "duration_ms": int((time.time() - start_time) * 1000)
         }
     })
