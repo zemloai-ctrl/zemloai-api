@@ -11,6 +11,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+# Alustetaan Supabase vain jos tunnukset löytyvät
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 def identify_caller(ua, provided_name):
@@ -24,9 +25,9 @@ def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
         return {"error": "API Key Missing"}
 
-    # SUORA REITTI: Käytetään Gemini 2 Flashia ja vakaata v1-rajapintaa
-    # Tämä ohittaa kaikki kirjastovirheet ja api_version-ongelmat
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    # SUORA REITTI: Käytetään Gemini 2.0 Flashia ja v1beta-endpointia
+    # Tämä on tällä hetkellä vakain tapa saada Gemini 2:lta puhdasta JSONia
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
     Analyze logistics route: {origin} to {destination} with cargo: {cargo}.
@@ -41,19 +42,29 @@ def get_ai_signal(origin, destination, cargo):
     - is_intercontinental: (boolean)
     """
 
+    # TÄRKEÄÄ: Gemini 2 vaatii 'role': 'user' -määrittelyn
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"response_mime_type": "application/json"}
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": prompt}]
+        }],
+        "generationConfig": {
+            "response_mime_type": "application/json"
+        }
     }
 
     try:
         response = requests.post(url, json=payload, timeout=30)
+        
         if response.status_code != 200:
-            return {"error": f"Google API Error {response.status_code}"}
+            return {"error": f"Google API Error {response.status_code}: {response.text}"}
             
         data = response.json()
+        
+        # Kaivetaan teksti ulos Googlen rakenteesta
         content = data['candidates'][0]['content']['parts'][0]['text']
         return json.loads(content)
+        
     except Exception as e:
         return {"error": str(e)}
 
@@ -61,6 +72,8 @@ def get_ai_signal(origin, destination, cargo):
 def get_signal():
     start_time = time.time()
     ua = request.headers.get('User-Agent', '')
+    
+    # Käsitellään sekä GET että POST parametrit
     data = request.get_json(silent=True) if request.method == 'POST' else request.args
     if data is None: data = {}
     
@@ -72,10 +85,11 @@ def get_signal():
     if not origin or not destination:
         return jsonify({"error": "Missing 'from' or 'to' parameters"}), 400
 
+    # Haetaan tekoälysignaali
     s = get_ai_signal(origin, destination, cargo)
     is_success = "error" not in s
     
-    # Trust Score laskenta
+    # Lasketaan Trust Score dynaamisesti (Zemlo AI v1.1 logiikka)
     trust_score = 95
     if is_success:
         if s.get("is_intercontinental"): trust_score -= 10
@@ -85,6 +99,7 @@ def get_signal():
     price_max = s.get('price_max')
     price_estimate = f"{price_min} - {price_max} EUR" if is_success and price_min else "Unavailable – contact carrier"
 
+    # Rakennetaan Zemlo-standardin mukainen vastaus
     response_data = {
         "signal": {
             "price_estimate": price_estimate,
@@ -103,6 +118,7 @@ def get_signal():
         }
     }
 
+    # Tallennus Supabaseen jos käytössä
     if supabase:
         try:
             supabase.table("signals").insert({
@@ -110,13 +126,16 @@ def get_signal():
                 "bot_name": caller, "price_estimate": price_estimate,
                 "type": "AI_AGENT" if "Human" not in caller else "HUMAN"
             }).execute()
-        except Exception as e: print(f"DB Error: {e}")
+        except Exception as e: 
+            print(f"DB Error: {e}")
 
     return jsonify(response_data)
 
 @app.route('/')
-def health(): return "Zemlo v1.2 Operational", 200
+def health(): 
+    return "Zemlo v1.2 Operational", 200
 
 if __name__ == "__main__":
+    # Render vaatii PORT-ympäristömuuttujan käyttöä
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
