@@ -74,19 +74,41 @@ def get_signal():
 
     s = get_ai_signal(origin, destination, cargo)
     
-    # RAKENNETAAN SIGNAALI - Zemlo situational awareness mode
+    # RAKENNETAAN SIGNAALI - The Intelligence Patch
+    s = get_ai_signal(origin, destination, cargo)
+    is_ai_success = "error" not in s
+    
+    # 1. Hinta
     p_min = s.get('price_min')
     p_max = s.get('price_max')
-    
     if p_min and p_max:
         price_estimate = f"{p_min} - {p_max} EUR"
-    elif s.get('price_estimate') and s.get('price_estimate') != "Unavailable":
-        # Jos AI antoi hinnan eri kentässä, käytetään sitä
-        price_estimate = s.get('price_estimate')
     else:
-        # Viimeinen yritys: Jos ollaan Euroopassa, annetaan fiksu arvio tilalle
-        # Tämä varmistaa, ettei käyttäjä näe "Check manual" -viestiä turhaan
-        price_estimate = "250 - 650 EUR (Market Estimate)"
+        price_estimate = s.get('price_estimate', "250 - 650 EUR (Est.)")
+
+    # 2. Tullit ja riskit (Annetaan AI:n päättää)
+    customs_val = "Required" if s.get("customs_needed") else "Not Required"
+    # Jos reitti on EU:n ulkopuolelle, pakotetaan tulli jos AI epäröi
+    if "serbia" in origin.lower() or "serbia" in destination.lower():
+        customs_val = "Required"
+
+    response_data = {
+        "signal": {
+            "price_estimate": price_estimate,
+            "transport_mode": s.get("mode", "Road Freight"),
+            "trust_score": max(0, min(100, 95 if is_ai_success else 70)),
+            "risk_analysis": s.get("risk", "Standard transit risks"),
+            "customs": customs_val
+        },
+        "clarification": {
+            "checklist": s.get("actions", ["Check customs docs", "Verify cargo dimensions", "Contact carrier"])
+        },
+        "metadata": {
+            "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)",
+            "request_by": caller,
+            "duration_ms": int((time.time() - start_time) * 1000)
+        }
+    }
 
     trust_score = 95
     if s.get("is_intercontinental"): trust_score -= 10
