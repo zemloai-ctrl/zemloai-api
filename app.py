@@ -25,7 +25,7 @@ def get_ai_signal(origin, destination, cargo):
     if not GEMINI_API_KEY:
         return {"error": "API Key Missing"}
 
-    # SUORA REITTI: Käytetään Gemini 1.5 Flashia (vakaampi kiintiö)
+    # SUORA REITTI: Käytetään Gemini 1.5 Flashia (vakaampi v1-endpoint)
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     prompt = f"""
@@ -41,8 +41,7 @@ def get_ai_signal(origin, destination, cargo):
     - is_intercontinental: (boolean)
     """
 
-    # TÄRKEÄÄ: Gemini 2 vaatii 'role': 'user' -määrittelyn
-payload = {
+    payload = {
         "contents": [{
             "role": "user",
             "parts": [{"text": prompt}]
@@ -59,6 +58,10 @@ payload = {
         
         # Kaivetaan teksti ulos Googlen rakenteesta
         content = data['candidates'][0]['content']['parts'][0]['text']
+        
+        # Siivotaan mahdolliset markdown-koodiblokit pois
+        content = content.replace("```json", "").replace("```", "").strip()
+        
         return json.loads(content)
         
     except Exception as e:
@@ -108,7 +111,7 @@ def get_signal():
             "checklist": s.get("actions", ["Contact freight forwarder", "Verify documents", "Check dimensions"])
         },
         "metadata": {
-            "engine": "Zemlo v1.2 Brain (Gemini 2 Flash)" if is_success else f"Zemlo v1.2 (Fallback: {s.get('error')})",
+            "engine": "Zemlo v1.2 Brain (Gemini 1.5 Flash)" if is_success else f"Zemlo v1.2 (Fallback: {s.get('error')})",
             "request_by": caller,
             "duration_ms": int((time.time() - start_time) * 1000)
         }
@@ -129,9 +132,4 @@ def get_signal():
 
 @app.route('/')
 def health(): 
-    return "Zemlo v1.2 Operational", 200
-
-if __name__ == "__main__":
-    # Render vaatii PORT-ympäristömuuttujan käyttöä
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    return "Z
