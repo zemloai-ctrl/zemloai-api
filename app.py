@@ -23,11 +23,8 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Zemlo-v1.6.7")
 
-# Konfiguraatio
-RATE_LIMIT_CALLS = 100 # Nostettu maksulliselle tilille
+RATE_LIMIT_CALLS = 100
 RATE_LIMIT_WINDOW = 60
-
-RAMADAN_COUNTRIES = ["saudi", "uae", "dubai", "qatar", "kuwait", "egypt", "indonesia", "malaysia", "turkey", "pakistan", "jordan", "oman"]
 
 SANCTIONED_ROUTES = [
     (["iran", "tehran"], "US OFAC + EU sanctions. No price quoting permitted."),
@@ -74,21 +71,22 @@ def log_to_supabase(origin, dest, cargo, response_data, status="success"):
         logger.warning(f"Supabase logging failed: {e}")
 
 # ==============================
-# 3. AI-MOOTTORI (GEMINI 3 FLASH)
+# 3. AI-MOOTTORI (GEMINI 2.5 FLASH)
 # ==============================
 
 def get_ai_signal(origin, dest, cargo, weight):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key: return {"error": "API_KEY_MISSING"}
 
+    # Prompt ohjaa 2.5 Flashia tekemään myös tullipäätöksen
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", \"risk\":\"Low|Med|High\", "
         f"\"actions\":[\"str\"], \"dist_km\":int, \"customs_needed\":bool}}. "
-        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Zemlo 1.6.7 Logic."
+        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Use 2026 logistics data."
     )
     
-    # Käytetään oikeaa Gemini 3 Flash / 2.5 Flash endpointia
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    # MALLI PÄIVITETTY: gemini-2.5-flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     
     try:
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=12)
@@ -96,16 +94,16 @@ def get_ai_signal(origin, dest, cargo, weight):
         
         if 'candidates' not in data:
             logger.error(f"AI Error RAW: {data}")
-            return {"error": "AI_RESPONSE_STRUCTURE_ERROR", "details": data}
+            return {"error": "AI_STRUCTURE_ERROR", "details": data}
 
         raw_text = data['candidates'][0]['content']['parts'][0]['text']
-        # Puhdistetaan vastauksesta kaikki paitsi varsinainen JSON
+        # Poimitaan JSON-osuus varmuuden vuoksi
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if json_match:
             return json.loads(json_match.group())
         return json.loads(raw_text)
     except Exception as e:
-        return {"error": "AI_PARSING_ERROR", "details": str(e)}
+        return {"error": "AI_CALL_FAILED", "details": str(e)}
 
 # ==============================
 # 4. ENDPOINTIT
@@ -124,19 +122,21 @@ def get_signal():
     weight = data.get("weight", 500)
 
     if not origin or not dest:
-        return jsonify({"error": "Missing parameters."}), 400
+        return jsonify({"error": "Missing params."}), 400
 
+    # Blacklist-tarkistus
     for keywords, reason in SANCTIONED_ROUTES:
         if any(kw in origin.lower() or kw in dest.lower() for kw in keywords):
             return jsonify({"hard_stop": True, "reason": reason}), 451
 
-    # Cache key v1.6.7 (varmistaa uuden haun v1.6.6 bugin jälkeen)
+    # Välimuisti (5 min)
     cache_key = f"z1.6.7:{hashlib.md5(f'{origin}{dest}{cargo}{weight}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached: return jsonify(json.loads(cached))
     except: pass
 
+    # Haku AI:lta
     ai = get_ai_signal(origin, dest, cargo, weight)
     if "error" in ai:
         return jsonify(ai), 503
@@ -153,7 +153,7 @@ def get_signal():
         },
         "do_these_3_things": ai.get("actions", [])[:3],
         "metadata": {
-            "engine": "Zemlo v1.6.7 (3 Flash)",
+            "engine": "Zemlo v1.6.7 (2.5 Flash)",
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
@@ -168,7 +168,7 @@ def get_signal():
 
 @app.route("/")
 def health():
-    return jsonify({"status": "Operational", "version": "1.6.7"})
+    return jsonify({"status": "Operational", "version": "1.6.7", "model": "Gemini 2.5 Flash"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
