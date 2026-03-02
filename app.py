@@ -6,33 +6,29 @@ from datetime import datetime, timezone
 from supabase import create_client, Client
 
 # ==============================
-# 1. ALUSTUS & KONFIGURAATIO
+# 1. ALUSTUS
 # ==============================
-# Upstash (Redis) - Välimuisti ja Rate Limiting
 redis_client = Redis(
     url=os.environ.get("UPSTASH_REDIS_REST_URL"), 
     token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 )
 
-# Supabase - Pysyvä historiadatabase (Taulu: signals)
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key) if supabase_url else None
 
 app = Flask(__name__)
-CORS(app) # Sallii kutsut eri domaineista (tärkeä AI-agenteille)
+CORS(app)
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.6.5")
+logger = logging.getLogger("Zemlo-v1.6.6")
 
-# Asetukset
+# Konfiguraatio
 RATE_LIMIT_CALLS = 10
-RATE_LIMIT_WINDOW = 60 # sekuntia
+RATE_LIMIT_WINDOW = 60
 
-EU_COUNTRIES = ["austria", "belgium", "bulgaria", "croatia", "cyprus", "czechia", "denmark", "estonia", "finland", "france", "germany", "greece", "hungary", "ireland", "italy", "latvia", "lithuania", "luxembourg", "malta", "netherlands", "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden"]
 RAMADAN_COUNTRIES = ["saudi", "uae", "dubai", "qatar", "kuwait", "egypt", "indonesia", "malaysia", "turkey", "pakistan", "jordan", "oman"]
 
-# Blacklist - Estetyt reitit pakotteiden vuoksi
 SANCTIONED_ROUTES = [
     (["iran", "tehran"], "US OFAC + EU sanctions. No price quoting permitted."),
     (["russia", "moscow", "st. petersburg"], "Active EU/US trade sanctions."),
@@ -44,7 +40,6 @@ SANCTIONED_ROUTES = [
 # ==============================
 
 def check_rate_limit(ip):
-    """Varmistaa, ettei yksi IP kuluta Geminin kiintiötä loppuun."""
     key = f"limit:{ip}"
     try:
         current = redis_client.get(key)
@@ -53,10 +48,9 @@ def check_rate_limit(ip):
         redis_client.incr(key)
         redis_client.expire(key, RATE_LIMIT_WINDOW)
         return True
-    except: return True # Fail-safe: päästä läpi jos Redis ei vastaa
+    except: return True
 
 def log_to_supabase(origin, dest, cargo, response_data, status="success"):
-    """Tallentaa haun 'signals'-tauluun analytiikkaa varten."""
     if not supabase: return
     try:
         user_agent = request.headers.get('User-Agent', '').lower()
@@ -79,16 +73,7 @@ def log_to_supabase(origin, dest, cargo, response_data, status="success"):
     except Exception as e:
         logger.warning(f"Supabase logging failed: {e}")
 
-def check_customs(origin, dest):
-    """Tarkistaa tullivaatimukset EU-rajojen perusteella."""
-    o, d = origin.lower(), dest.lower()
-    if o == d: return False
-    def is_eu(loc):
-        return any(re.search(rf'\b{c}\b', loc) for c in EU_COUNTRIES)
-    return not (is_eu(o) and is_eu(d))
-
 def get_context_warnings(origin, dest):
-    """Hakee reaaliaikaiset varoitukset logistiikkasäästä."""
     warnings = []
     now = datetime.now(timezone.utc)
     combined = (origin + " " + dest).lower()
@@ -110,33 +95,36 @@ def get_ai_signal(origin, dest, cargo, weight):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key: return {"error": "API_KEY_MISSING"}
 
+    # Prompt päivitetty v1.6.6: Lisätty "customs_needed" päätöksenteko tekoälylle
     prompt = (
-        f"You are Zemlo v1.6.5 Logistics Agent. Return ONLY JSON: "
-        f"{{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int}}. "
-        f"Route: {origin} to {dest}, Cargo: {cargo}, Weight: {weight}kg. Date: March 2, 2026."
+        f"You are Zemlo v1.6.6 Logistics Agent. Return ONLY JSON: "
+        f"{{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", \"risk\":\"Low|Med|High\", "
+        f"\"actions\":[\"str\"], \"dist_km\":int, \"customs_needed\":bool}}. "
+        f"Context: Route {origin} to {dest}, Cargo {cargo}, Weight {weight}kg. Date March 2, 2026. "
+        f"Determine if customs clearance is needed based on geography (e.g., intra-EU is false)."
     )
     
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={api_key}"
     
     try:
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=12)
         raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(raw_text.replace("```json", "").replace("```", "").strip())
+        # Siivotaan markdown-koodiblokit pois jos tekoäly niitä tarjoaa
+        clean_json = re.sub(r'```json\s*|\s*```', '', raw_text).strip()
+        return json.loads(clean_json)
     except Exception as e:
         return {"error": "AI_UNAVAILABLE", "details": str(e)}
 
 # ==============================
-# 4. PÄÄENDPOINTIT
+# 4. ENDPOINTIT
 # ==============================
 
 @app.route("/signal", methods=["GET", "POST"])
 def get_signal():
-    # A. Rate Limit -tarkistus
     client_ip = request.remote_addr
     if not check_rate_limit(client_ip):
-        return jsonify({"error": "Rate limit exceeded. Too many requests per minute."}), 429
+        return jsonify({"error": "Rate limit exceeded."}), 429
 
-    # B. Syötteen luku
     data = request.get_json(silent=True) if request.method == "POST" else request.args
     origin = data.get("from", "").strip()
     dest = data.get("to", "").strip()
@@ -144,34 +132,34 @@ def get_signal():
     weight = data.get("weight", 500)
 
     if not origin or not dest:
-        return jsonify({"error": "Fields 'from' and 'to' are required."}), 400
+        return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
 
-    # C. Pakotelista (Hard Stop)
+    # Pakotelista
     for keywords, reason in SANCTIONED_ROUTES:
         if any(kw in origin.lower() or kw in dest.lower() for kw in keywords):
             res = {"hard_stop": True, "reason": reason}
             log_to_supabase(origin, dest, cargo, {"metadata":{"id":"blocked"}}, status="blocked")
             return jsonify(res), 451
 
-    # D. Välimuisti (Upstash)
-    cache_key = f"z1.6.5:{hashlib.md5(f'{origin}{dest}{cargo}{weight}'.encode()).hexdigest()}"
+    # Välimuisti (5 min)
+    cache_key = f"z1.6.6:{hashlib.md5(f'{origin}{dest}{cargo}{weight}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached: return jsonify(json.loads(cached))
     except: pass
 
-    # E. Signaalin haku tekoälyltä
+    # Haku AI:lta
     ai = get_ai_signal(origin, dest, cargo, weight)
     if "error" in ai:
         return jsonify(ai), 503
 
-    # F. Vastauksen rakennus (The Signal)
     response = {
         "signal": {
             "price_estimate": f"{ai.get('p_min')} - {ai.get('p_max')} EUR",
             "transport_mode": ai.get("mode"),
             "trust_score": 90 if ai.get("risk") == "Low" else 65,
-            "customs_clearance_required": check_customs(origin, dest)
+            # Käytetään AI:n tekemää maantieteellistä päätelmää
+            "customs_clearance_required": ai.get("customs_needed", False)
         },
         "environmental_impact": {
             "estimated_co2_kg": round(ai.get("dist_km", 1000) * (float(weight)/1000) * 0.1, 1)
@@ -179,15 +167,14 @@ def get_signal():
         "context_warnings": get_context_warnings(origin, dest),
         "do_these_3_things": ai.get("actions", [])[:3],
         "metadata": {
-            "engine": "Zemlo v1.6.5",
+            "engine": "Zemlo v1.6.6",
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
     }
 
-    # G. Tallennus ja Välimuisti
     try:
-        redis_client.set(cache_key, json.dumps(response), ex=300) # 5 min välimuisti
+        redis_client.set(cache_key, json.dumps(response), ex=300)
         log_to_supabase(origin, dest, cargo, response, status="success")
     except: pass
 
@@ -195,13 +182,8 @@ def get_signal():
 
 @app.route("/")
 def health():
-    return jsonify({
-        "status": "Operational",
-        "version": "1.6.5",
-        "services": ["Gemini 2.5", "Upstash Redis", "Supabase Signals"]
-    })
+    return jsonify({"status": "Operational", "version": "1.6.6"})
 
 if __name__ == "__main__":
-    # Render käyttää PORT-ympäristömuuttujaa
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
