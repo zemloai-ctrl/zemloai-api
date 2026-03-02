@@ -2,7 +2,7 @@ import os, time, json, requests, random, logging, hashlib, uuid
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from upstash_redis import Redis
-from datetime import datetime, timezone # Lisätty datetime-tuki
+from datetime import datetime, timezone
 
 # ==============================
 # 1. INITIALIZATION
@@ -16,10 +16,10 @@ app = Flask(__name__)
 CORS(app)
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v2.0.4")
+logger = logging.getLogger("Zemlo-v2.0.6-Paid")
 
 # ==============================
-# 2. LOGISTICS DATA (v2.0.4)
+# 2. LOGISTICS DATA & BLACKLISTS
 # ==============================
 EU_COUNTRIES = ["austria", "belgium", "bulgaria", "croatia", "cyprus", "czechia", "denmark", "estonia", "finland", "france", "germany", "greece", "hungary", "ireland", "italy", "latvia", "lithuania", "luxembourg", "malta", "netherlands", "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden"]
 
@@ -58,22 +58,16 @@ def redis_safe(func, *args, **kwargs):
         return None
 
 def get_ramadan_warning(origin, dest):
-    # Käytetään datetime-vertailua, koska systeemikello (Unix timestamp) voi heittää
     now = datetime.now(timezone.utc)
     ramadan_start = datetime(2026, 3, 1, tzinfo=timezone.utc)
     ramadan_end   = datetime(2026, 3, 31, tzinfo=timezone.utc)
-    
     is_ramadan = ramadan_start <= now <= ramadan_end
-    
-    # JOS serverin kello on yhä heinäkuussa, poista '#' alta pakottaaksesi varoituksen:
-    # is_ramadan = True 
 
-    if not is_ramadan:
-        return None
+    if not is_ramadan: return None
         
     combined = (origin + " " + dest).lower()
     if any(country in combined for country in RAMADAN_COUNTRIES):
-        return "⚠️ RAMADAN 2026 (1–31 Mar): Port and customs operations in this region may experience significant delays. Allow +3–7 days buffer."
+        return "⚠️ RAMADAN 2026 (1–31 Mar): Port and customs operations in this region may experience significant delays."
     return None
 
 def compute_trust(ai_data):
@@ -92,18 +86,28 @@ def check_customs(origin, dest):
     return not (o_is_eu and d_is_eu) if o != d else False
 
 # ==============================
-# 4. AI AGENT
+# 4. AI AGENT (v2.0.6 - NO TIMEOUTS)
 # ==============================
 def get_ai_signal(origin, dest, cargo):
     api_key = os.environ.get("GEMINI_API_KEY")
-    prompt = (f"Zemlo v2.0 Logistics AI. Return ONLY raw JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"string\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"]}}. Route: {origin}-{dest}, Cargo: {cargo}")
+    prompt = (
+        f"Zemlo v2.0 Logistics AI. Current: March 2026. "
+        f"Return ONLY raw JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"string\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"]}}. "
+        f"Route: {origin}-{dest}, Cargo: {cargo}. "
+        f"Include ADR/UN-numbers for batteries."
+    )
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={api_key}"
+    
     try:
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=8)
+        logger.info(f"AI Fetch for: {origin}-{dest}")
+        # NOSTETTU 8 -> 30 jotta maksettu tila toimii varmasti
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         resp.raise_for_status()
         raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(raw.replace("```json", "").replace("```", "").strip())
+        json_str = raw.replace("```json", "").replace("```", "").strip()
+        return json.loads(json_str)
     except Exception as e:
+        logger.error(f"Gemini Error: {e}")
         return {"error": "AI_OFFLINE", "details": str(e)}
 
 # ==============================
@@ -117,34 +121,25 @@ def get_signal():
 
     if not origin or not dest: return jsonify({"error": "Missing route"}), 400
 
-    # Safety Layer
+    # Safety
     for keywords, reason in SANCTIONED_ROUTES:
         if any(kw in origin.lower() or kw in dest.lower() for kw in keywords):
             return jsonify({"hard_stop": True, "reason": reason}), 451
-    for keywords, regions, reason in ILLEGAL_CARGO_RULES:
-        if any(kw in cargo.lower() for kw in keywords):
-            if not regions or any(reg in dest.lower() for reg in regions):
-                return jsonify({"hard_stop": True, "reason": reason}), 451
-
-    # Cache Layer
+            
+    # Cache
     cache_key = f"z2:cache:{hashlib.md5(f'{origin}{dest}{cargo}'.encode()).hexdigest()}"
     cached = redis_safe(redis_client.get, cache_key)
     
     if cached:
         res = json.loads(cached)
-        # Injektoidaan dynaaminen varoitus myös välimuistivastaukseen
-        ramadan = get_ramadan_warning(origin, dest)
-        if ramadan and ramadan not in res.get("context_warnings", []):
-            res.setdefault("context_warnings", []).insert(0, ramadan)
         res["metadata"]["cache_hit"] = True
         return jsonify(res)
 
-    # AI & Logic
+    # AI & Business Logic
     ai = get_ai_signal(origin, dest, cargo)
     if "error" in ai: return jsonify(ai), 503
 
     ramadan = get_ramadan_warning(origin, dest)
-    warnings = [ramadan] if ramadan else []
     
     response = {
         "signal": {
@@ -155,24 +150,20 @@ def get_signal():
             "risk_level": ai.get("risk")
         },
         "do_these_3_things": ai.get("actions", [])[:3],
-        "context_warnings": warnings,
-        "metadata": {"engine": "Zemlo v2.0.4-Upstash", "id": str(uuid.uuid4())[:8], "cache_hit": False}
+        "context_warnings": [ramadan] if ramadan else [],
+        "metadata": {
+            "engine": "Zemlo v2.0.6-Paid", 
+            "id": str(uuid.uuid4())[:8], 
+            "cache_hit": False
+        }
     }
+    
     redis_safe(redis_client.set, cache_key, json.dumps(response), ex=300)
     return jsonify(response)
 
 @app.route("/")
 def health():
-    now_dt = datetime.now(timezone.utc)
-    ramadan_start = datetime(2026, 3, 1, tzinfo=timezone.utc)
-    ramadan_end   = datetime(2026, 3, 31, tzinfo=timezone.utc)
-    return jsonify({
-        "status": "Zemlo 2.0 Operational",
-        "version": "2.0.4-Upstash",
-        "current_server_time": now_dt.isoformat(),
-        "ramadan_active_logic": ramadan_start <= now_dt <= ramadan_end,
-        "is_march_2026": now_dt.month == 3 and now_dt.year == 2026
-    })
+    return jsonify({"status": "Zemlo 2.0 Operational", "version": "2.0.6-Paid"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
