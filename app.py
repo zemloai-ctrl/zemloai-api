@@ -1,30 +1,17 @@
-import os, time, json, requests, random, logging, hashlib, uuid, re
+import os, json, requests, hashlib, uuid, re, logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from upstash_redis import Redis
 from datetime import datetime, timezone
 from supabase import create_client, Client
 
-# ==============================
-# 1. ALUSTUS
-# ==============================
-redis_client = Redis(
-    url=os.environ.get("UPSTASH_REDIS_REST_URL"), 
-    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-)
-
-supabase_url = os.environ.get("SUPABASE_URL")
-supabase_key = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key) if supabase_url else None
-
+# 1. Alustus
 app = Flask(__name__)
 CORS(app)
+logger = logging.getLogger("Zemlo-v1.6.9")
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.6.7")
-
-RATE_LIMIT_CALLS = 100
-RATE_LIMIT_WINDOW = 60
+redis_client = Redis(url=os.environ.get("UPSTASH_REDIS_REST_URL"), token=os.environ.get("UPSTASH_REDIS_REST_TOKEN"))
+supabase: Client = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
 
 SANCTIONED_ROUTES = [
     (["iran", "tehran"], "US OFAC + EU sanctions. No price quoting permitted."),
@@ -32,27 +19,13 @@ SANCTIONED_ROUTES = [
     (["north korea", "pyongyang"], "UN total embargo.")
 ]
 
-# ==============================
-# 2. APUFUNKTIOT
-# ==============================
-
-def check_rate_limit(ip):
-    key = f"limit:{ip}"
-    try:
-        current = redis_client.get(key)
-        if current and int(current) >= RATE_LIMIT_CALLS:
-            return False
-        redis_client.incr(key)
-        redis_client.expire(key, RATE_LIMIT_WINDOW)
-        return True
-    except: return True
-
+# 2. Apufunktiot
 def log_to_supabase(origin, dest, cargo, response_data, status="success"):
-    if not supabase: return
     try:
-        user_agent = request.headers.get('User-Agent', '').lower()
-        is_bot = any(bot in user_agent for bot in ['bot', 'crawler', 'spider', 'agent', 'perplexity', 'claude'])
+        ua = request.headers.get('User-Agent', '').lower()
+        is_bot = any(b in ua for b in ['bot', 'crawler', 'agent', 'perplexity', 'claude'])
         
+        # Jätetään 'id' pois, jotta Supabase generoi sen itse
         payload = {
             "origin": origin,
             "destination": dest,
@@ -62,98 +35,71 @@ def log_to_supabase(origin, dest, cargo, response_data, status="success"):
             "trust_score": response_data.get("signal", {}).get("trust_score"),
             "mode": response_data.get("signal", {}).get("transport_mode"),
             "co2_kg": response_data.get("environmental_impact", {}).get("estimated_co2_kg"),
-            "request_id": response_data.get("metadata", {}).get("id"),
             "type": "BOT" if is_bot else "HUMAN",
-            "bot_name": user_agent[:50] if is_bot else "Human (Browser)"
+            "bot_name": ua[:50]
         }
         supabase.table("signals").insert(payload).execute()
     except Exception as e:
         logger.warning(f"Supabase logging failed: {e}")
 
-# ==============================
-# 3. AI-MOOTTORI (GEMINI 2.5 FLASH)
-# ==============================
-
+# 3. Ydin: Gemini 2.5 Flash
 def get_ai_signal(origin, dest, cargo, weight):
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key: return {"error": "API_KEY_MISSING"}
-
-    # Prompt ohjaa 2.5 Flashia tekemään myös tullipäätöksen
     prompt = (
-        f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", \"risk\":\"Low|Med|High\", "
-        f"\"actions\":[\"str\"], \"dist_km\":int, \"customs_needed\":bool}}. "
-        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Use 2026 logistics data."
+        f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
+        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool}}. "
+        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Zemlo 1.6.9 Logic. "
+        f"Strict: 'customs':false if intra-EU (e.g. Finland to Finland)."
     )
     
-    # MALLI PÄIVITETTY: gemini-2.5-flash
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ.get('GEMINI_API_KEY')}"
     
     try:
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=12)
-        data = resp.json()
-        
-        if 'candidates' not in data:
-            logger.error(f"AI Error RAW: {data}")
-            return {"error": "AI_STRUCTURE_ERROR", "details": data}
-
-        raw_text = data['candidates'][0]['content']['parts'][0]['text']
-        # Poimitaan JSON-osuus varmuuden vuoksi
-        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-        return json.loads(raw_text)
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=10)
+        raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
+        json_str = re.search(r'\{.*\}', raw_text, re.DOTALL).group()
+        return json.loads(json_str)
     except Exception as e:
-        return {"error": "AI_CALL_FAILED", "details": str(e)}
+        logger.error(f"AI error: {e}")
+        return None
 
-# ==============================
-# 4. ENDPOINTIT
-# ==============================
-
+# 4. Reitit
 @app.route("/signal", methods=["GET", "POST"])
 def get_signal():
-    client_ip = request.remote_addr
-    if not check_rate_limit(client_ip):
-        return jsonify({"error": "Rate limit exceeded."}), 429
-
     data = request.get_json(silent=True) if request.method == "POST" else request.args
     origin = data.get("from", "").strip()
     dest = data.get("to", "").strip()
     cargo = data.get("cargo", "General").strip()
     weight = data.get("weight", 500)
 
-    if not origin or not dest:
-        return jsonify({"error": "Missing params."}), 400
+    if not origin or not dest: return jsonify({"error": "Missing params"}), 400
 
-    # Blacklist-tarkistus
+    # Blacklist check
     for keywords, reason in SANCTIONED_ROUTES:
-        if any(kw in origin.lower() or kw in dest.lower() for kw in keywords):
+        if any(k in origin.lower() or k in dest.lower() for k in keywords):
+            log_to_supabase(origin, dest, cargo, {"signal":{}}, status="blocked")
             return jsonify({"hard_stop": True, "reason": reason}), 451
 
-    # Välimuisti (5 min)
-    cache_key = f"z1.6.7:{hashlib.md5(f'{origin}{dest}{cargo}{weight}'.encode()).hexdigest()}"
+    # Cache key v1.6.9
+    cache_key = f"z1.6.9:{hashlib.md5(f'{origin}{dest}{cargo}{weight}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached: return jsonify(json.loads(cached))
     except: pass
 
-    # Haku AI:lta
     ai = get_ai_signal(origin, dest, cargo, weight)
-    if "error" in ai:
-        return jsonify(ai), 503
+    if not ai: return jsonify({"error": "AI side failure"}), 503
 
     response = {
         "signal": {
-            "price_estimate": f"{ai.get('p_min')} - {ai.get('p_max')} EUR",
-            "transport_mode": ai.get("mode"),
-            "trust_score": 90 if ai.get("risk") == "Low" else 65,
-            "customs_clearance_required": ai.get("customs_needed", False)
+            "price_estimate": f"{ai['p_min']} - {ai['p_max']} EUR",
+            "transport_mode": ai['mode'],
+            "trust_score": 90 if ai['risk'] == "Low" else 65,
+            "customs_clearance_required": ai['customs']
         },
-        "environmental_impact": {
-            "estimated_co2_kg": round(ai.get("dist_km", 1000) * (float(weight)/1000) * 0.1, 1)
-        },
-        "do_these_3_things": ai.get("actions", [])[:3],
+        "environmental_impact": {"estimated_co2_kg": round(ai['dist_km'] * (float(weight)/1000) * 0.1, 1)},
+        "do_these_3_things": ai['actions'][:3],
         "metadata": {
-            "engine": "Zemlo v1.6.7 (2.5 Flash)",
+            "engine": "Zemlo v1.6.9 (2.5 Flash)",
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
@@ -161,15 +107,13 @@ def get_signal():
 
     try:
         redis_client.set(cache_key, json.dumps(response), ex=300)
-        log_to_supabase(origin, dest, cargo, response, status="success")
+        log_to_supabase(origin, dest, cargo, response)
     except: pass
 
     return jsonify(response)
 
 @app.route("/")
-def health():
-    return jsonify({"status": "Operational", "version": "1.6.7", "model": "Gemini 2.5 Flash"})
+def health(): return jsonify({"status": "Operational", "version": "1.6.9"})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
