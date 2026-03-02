@@ -2,5 +2,6 @@ flask
 flask-cors
 requests
 upstash-redis
+supabase
 gunicorn
 python-dotenv
