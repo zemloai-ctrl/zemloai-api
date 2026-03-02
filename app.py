@@ -2,6 +2,7 @@ import os, time, json, requests, random, logging, hashlib, uuid
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from upstash_redis import Redis
+from datetime import datetime, timezone # Lisätty datetime-tuki
 
 # ==============================
 # 1. INITIALIZATION
@@ -22,9 +23,6 @@ logger = logging.getLogger("Zemlo-v2.0.4")
 # ==============================
 EU_COUNTRIES = ["austria", "belgium", "bulgaria", "croatia", "cyprus", "czechia", "denmark", "estonia", "finland", "france", "germany", "greece", "hungary", "ireland", "italy", "latvia", "lithuania", "luxembourg", "malta", "netherlands", "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden"]
 
-# Ramadan 2026: 1.3.2026 klo 00:00 - 30.3.2026 klo 23:59
-RAMADAN_2026_START = 1740787200
-RAMADAN_2026_END   = 1743379200
 RAMADAN_COUNTRIES = ["saudi", "uae", "dubai", "qatar", "kuwait", "egypt", "indonesia", "malaysia", "turkey", "pakistan", "jordan", "oman", "riyadh", "jeddah", "abu dhabi", "cairo", "jakarta", "kuala lumpur", "istanbul", "karachi"]
 
 SANCTIONED_ROUTES = [
@@ -60,14 +58,22 @@ def redis_safe(func, *args, **kwargs):
         return None
 
 def get_ramadan_warning(origin, dest):
-    now = time.time()
-    # DEBUG: Logataan vertailu konsoliin
-    is_active = RAMADAN_2026_START <= now <= RAMADAN_2026_END
-    if not is_active:
+    # Käytetään datetime-vertailua, koska systeemikello (Unix timestamp) voi heittää
+    now = datetime.now(timezone.utc)
+    ramadan_start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    ramadan_end   = datetime(2026, 3, 31, tzinfo=timezone.utc)
+    
+    is_ramadan = ramadan_start <= now <= ramadan_end
+    
+    # JOS serverin kello on yhä heinäkuussa, poista '#' alta pakottaaksesi varoituksen:
+    # is_ramadan = True 
+
+    if not is_ramadan:
         return None
+        
     combined = (origin + " " + dest).lower()
     if any(country in combined for country in RAMADAN_COUNTRIES):
-        return "⚠️ RAMADAN 2026 (1–30 Mar): Port and customs operations in this region may experience significant delays. Allow +3–7 days buffer."
+        return "⚠️ RAMADAN 2026 (1–31 Mar): Port and customs operations in this region may experience significant delays. Allow +3–7 days buffer."
     return None
 
 def compute_trust(ai_data):
@@ -111,7 +117,7 @@ def get_signal():
 
     if not origin or not dest: return jsonify({"error": "Missing route"}), 400
 
-    # Safety
+    # Safety Layer
     for keywords, reason in SANCTIONED_ROUTES:
         if any(kw in origin.lower() or kw in dest.lower() for kw in keywords):
             return jsonify({"hard_stop": True, "reason": reason}), 451
@@ -120,12 +126,13 @@ def get_signal():
             if not regions or any(reg in dest.lower() for reg in regions):
                 return jsonify({"hard_stop": True, "reason": reason}), 451
 
-    # Cache
+    # Cache Layer
     cache_key = f"z2:cache:{hashlib.md5(f'{origin}{dest}{cargo}'.encode()).hexdigest()}"
     cached = redis_safe(redis_client.get, cache_key)
     
     if cached:
         res = json.loads(cached)
+        # Injektoidaan dynaaminen varoitus myös välimuistivastaukseen
         ramadan = get_ramadan_warning(origin, dest)
         if ramadan and ramadan not in res.get("context_warnings", []):
             res.setdefault("context_warnings", []).insert(0, ramadan)
@@ -156,17 +163,15 @@ def get_signal():
 
 @app.route("/")
 def health():
-    now = time.time()
+    now_dt = datetime.now(timezone.utc)
+    ramadan_start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    ramadan_end   = datetime(2026, 3, 31, tzinfo=timezone.utc)
     return jsonify({
         "status": "Zemlo 2.0 Operational",
         "version": "2.0.4-Upstash",
-        "debug": {
-            "server_time_raw": now,
-            "ramadan_start": RAMADAN_2026_START,
-            "ramadan_end": RAMADAN_2026_END,
-            "is_ramadan_active": RAMADAN_2026_START <= now <= RAMADAN_2026_END,
-            "seconds_since_start": now - RAMADAN_2026_START
-        }
+        "current_server_time": now_dt.isoformat(),
+        "ramadan_active_logic": ramadan_start <= now_dt <= ramadan_end,
+        "is_march_2026": now_dt.month == 3 and now_dt.year == 2026
     })
 
 if __name__ == "__main__":
