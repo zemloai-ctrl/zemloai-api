@@ -1,88 +1,182 @@
+import os, time, json, requests, random, logging, hashlib, uuid
 from flask import Flask, request, jsonify
-import time, os, json, requests
 from flask_cors import CORS
+from functools import wraps
+from upstash_redis import Redis
+
+# ==============================
+# 1. UPSTASH REST INITIALIZATION
+# ==============================
+redis_client = Redis(
+    url=os.environ.get("UPSTASH_REDIS_REST_URL"), 
+    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+)
 
 app = Flask(__name__)
-CORS(app)
+CORS(app) # Zemlo Connectivity: Sallii AI-agentit ja selaimet
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("Zemlo-v2.0-Upstash")
 
-def get_ai_signal(origin, destination, cargo):
-    if not GEMINI_API_KEY:
-        return {"error": "API_KEY_MISSING"}
+# ==============================
+# 2. LOGISTICS DATA & SAFETY (v2.0 Full)
+# ==============================
+EU_COUNTRIES = ["austria", "belgium", "bulgaria", "croatia", "cyprus", "czechia", "denmark", "estonia", "finland", "france", "germany", "greece", "hungary", "ireland", "italy", "latvia", "lithuania", "luxembourg", "malta", "netherlands", "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden"]
 
-    # VUODEN 2026 TUOREIN: Gemini 2.5 Flash
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
-    prompt = f"Return ONLY JSON for logistics {origin} to {destination} ({cargo}). Format: {{\"p_min\": 100, \"p_max\": 200, \"mode\": \"text\", \"customs\": true, \"risk\": \"text\", \"actions\": [\"a\", \"b\"]}}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+# Ramadan 2026: 1.3.2026 - 30.3.2026 (Loppuu 31.3. 00:00 UTC)
+RAMADAN_2026_START = 1740787200 
+RAMADAN_2026_END   = 1743379200 # KORJATTU: Sisältää nyt koko 30. maaliskuuta
+RAMADAN_COUNTRIES = ["saudi", "uae", "dubai", "qatar", "kuwait", "egypt", "indonesia", "malaysia", "turkey", "pakistan", "jordan", "oman"]
 
-    try:
-        response = requests.post(url, json=payload, timeout=12)
-        
-        if response.status_code != 200:
-            return {"error": f"HTTP_{response.status_code}", "msg": response.text}
-            
-        data = response.json()
-        raw_text = data['candidates'][0]['content']['parts'][0]['text']
-        # Siivotaan markdown-koodiblokit pois jos AI niitä tarjoaa
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_json)
+SANCTIONED_ROUTES = [
+    (["iran", "tehran"], "US OFAC + EU sanctions. Western carriers prohibited."),
+    (["north korea", "pyongyang"], "UN Security Council total embargo."),
+    (["russia", "moscow", "st. petersburg"], "EU/US sanctions active."),
+    (["belarus", "minsk"], "EU sanctions active."),
+    (["syria", "damascus"], "Comprehensive UN/EU sanctions."),
+    (["venezuela", "caracas"], "US/EU financial and trade sanctions."),
+    (["cuba", "havana"], "US trade embargo."),
+    (["myanmar", "burma"], "EU/US military and trade sanctions."),
+    (["sudan", "khartoum"], "UN/EU sanctions on specific sectors."),
+    (["mali"], "ECOWAS and international trade restrictions.")
+]
+
+ILLEGAL_CARGO_RULES = [
+    (["cannabis", "marijuana", "weed", "hashish"], ["singapore", "dubai", "uae", "saudi", "china", "malaysia", "indonesia"], 
+     "Drug trafficking carries capital punishment or life imprisonment in this region."),
+    (["ivory", "rhino horn"], [], "CITES-prohibited wildlife products. Illegal globally.")
+]
+
+# ==============================
+# 3. CORE LOGIC FUNCTIONS
+# ==============================
+def redis_safe(func, *args, **kwargs):
+    try: return func(*args, **kwargs)
     except Exception as e:
-        return {"error": "CONNECTION_ERROR", "msg": str(e)}
+        logger.warning(f"Upstash Error: {e}")
+        return None
 
-@app.route('/signal', methods=['GET', 'POST'])
+def compute_trust(ai_data):
+    base = 100
+    p_min = ai_data.get('p_min', 0)
+    p_max = ai_data.get('p_max', 0)
+    risk = ai_data.get('risk', 'Low').lower()
+    
+    if p_max > p_min * 2: base -= 15 # Epävarmuus hinta-arviossa
+    if risk == 'high': base -= 30
+    if risk == 'med': base -= 10
+    return max(10, base)
+
+def check_customs(origin, dest):
+    """KORJATTU: Tarkistaa sisältääkö syöte EU-maan nimen (esim. 'Helsinki, Finland')."""
+    o, d = origin.lower(), dest.lower()
+    o_is_eu = any(country in o for country in EU_COUNTRIES)
+    d_is_eu = any(country in d for country in EU_COUNTRIES)
+    
+    if o_is_eu and d_is_eu: return False 
+    if o == d: return False
+    return True
+
+# ==============================
+# 4. AI AGENT (Gemini 2.5 Flash)
+# ==============================
+def get_ai_signal(origin, dest, cargo):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    prompt = (
+        f"Zemlo v2.0 Logistics AI. Return ONLY raw JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"string\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"]}}. "
+        f"Route: {origin}-{dest}, Cargo: {cargo}"
+    )
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={api_key}"
+    
+    try:
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=8)
+        resp.raise_for_status()
+        raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(raw.replace("```json", "").replace("```", "").strip())
+    except Exception as e:
+        logger.error(f"Gemini API Error: {str(e)}")
+        return {"error": "AI_OFFLINE", "details": str(e)}
+
+# ==============================
+# 5. ENDPOINTS
+# ==============================
+@app.route("/signal", methods=["GET", "POST"])
 def get_signal():
     start_time = time.time()
+    data = request.get_json(silent=True) if request.method == "POST" else request.args
     
-    if request.method == 'POST':
-        data = request.get_json(silent=True) or {}
-    else:
-        data = request.args
-    
-    origin = data.get('from', 'Unknown')
-    dest = data.get('to', 'Unknown')
-    cargo = data.get('cargo', 'General Cargo')
+    origin = data.get("from", "").strip()
+    dest = data.get("to", "").strip()
+    cargo = data.get("cargo", "General Cargo").strip()
 
+    # --- SAFETY LAYER ---
+    if not origin or not dest:
+        return jsonify({"error": "Missing 'from' or 'to' fields"}), 400
+
+    for keywords, reason in SANCTIONED_ROUTES:
+        if any(kw in origin.lower() or kw in dest.lower() for kw in keywords):
+            redis_safe(redis_client.incr, "metrics:hard_stops")
+            return jsonify({"hard_stop": True, "reason": reason, "type": "Sanctions"}), 451
+    
+    for keywords, regions, reason in ILLEGAL_CARGO_RULES:
+        if any(kw in cargo.lower() for kw in keywords):
+            if not regions or any(reg in dest.lower() for reg in regions):
+                redis_safe(redis_client.incr, "metrics:hard_stops")
+                return jsonify({"hard_stop": True, "reason": reason, "type": "Illegal Cargo"}), 451
+
+    # --- CACHE (300s / 5 min TTL) ---
+    cache_key = f"z2:cache:{hashlib.md5(f'{origin}{dest}{cargo}'.encode()).hexdigest()}"
+    cached = redis_safe(redis_client.get, cache_key)
+    if cached: 
+        redis_safe(redis_client.incr, "metrics:cache_hits")
+        return jsonify(json.loads(cached))
+
+    # --- AI SIGNAL ---
     ai = get_ai_signal(origin, dest, cargo)
+    if "error" in ai: return jsonify(ai), 503
 
-    if ai and "p_min" in ai:
-        p_min, p_max = ai.get('p_min'), ai.get('p_max')
-        mode = ai.get('mode', "Freight")
-        risk = ai.get('risk', "AI Analysis Success")
-        actions = ai.get('actions', ["Check docs"])
-        customs_needed = ai.get('customs', False)
-        trust = 100
-    else:
-        p_min, p_max = "ERR", "ERR"
-        mode = "ERROR"
-        risk = f"FAIL: {ai.get('error') if ai else 'Unknown'}"
-        actions = ["Check Google AI Studio for Gemini 2.5 status"]
-        customs_needed = False
-        trust = 0
+    # --- LOGIC & METRICS ---
+    trust = compute_trust(ai)
+    customs_needed = check_customs(origin, dest)
+    
+    redis_safe(redis_client.incr, "metrics:requests_total")
+    redis_safe(redis_client.incrbyfloat, "metrics:trust_sum", float(trust))
 
-    # Serbia-pakotus
-    is_serbia = any(x in origin.lower() or x in dest.lower() for x in ["serbia", "belgrade"])
-    customs_str = "Required" if customs_needed or is_serbia else "Not Required"
+    # --- RAMADAN INJECTION ---
+    warnings = []
+    now = time.time()
+    if RAMADAN_2026_START <= now <= RAMADAN_2026_END:
+        combined_route = (origin + " " + dest).lower()
+        if any(country in combined_route for country in RAMADAN_COUNTRIES):
+            warnings.append("⚠️ RAMADAN 2026 Context: Port and customs operations in this region may experience delays.")
 
-    return jsonify({
+    response = {
         "signal": {
-            "price_estimate": f"{p_min} - {p_max} EUR" if p_min != "ERR" else "Service Unavailable",
-            "transport_mode": mode,
+            "price_estimate": f"{ai.get('p_min')} - {ai.get('p_max')} EUR",
+            "transport_mode": ai.get("mode"),
             "trust_score": trust,
-            "risk_analysis": risk,
-            "customs": customs_str
+            "customs_clearance_required": customs_needed,
+            "risk_level": ai.get("risk")
         },
-        "clarification": { "checklist": actions },
-        "metadata": {
-            "engine": "Zemlo v1.2 (Gemini 2.5 Flash)",
-            "duration_ms": int((time.time() - start_time) * 1000)
-        }
-    })
+        "do_these_3_things": ai.get("actions", [])[:3],
+        "context_warnings": warnings,
+        "metadata": {"engine": "Zemlo v2.0.3-Upstash", "id": str(uuid.uuid4())[:8]}
+    }
 
-@app.route('/')
+    # Tallennus
+    redis_safe(redis_client.set, cache_key, json.dumps(response), ex=300)
+    return jsonify(response)
+
+@app.route('/test-db')
+def test_db():
+    try:
+        redis_client.set('z2_status', 'OK')
+        return {"status": "success", "msg": f"Zemlo 2.0 -> Upstash: {redis_client.get('z2_status')}"}
+    except Exception as e: return {"status": "error", "msg": str(e)}, 500
+
+@app.route("/")
 def health():
-    return "Zemlo Operational", 200
+    return jsonify({"status": "Zemlo 2.0 Operational", "version": "2.0.3-Upstash", "timestamp": "March 2026"})
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
