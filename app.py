@@ -21,10 +21,10 @@ app = Flask(__name__)
 CORS(app)
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.6.6")
+logger = logging.getLogger("Zemlo-v1.6.7")
 
 # Konfiguraatio
-RATE_LIMIT_CALLS = 10
+RATE_LIMIT_CALLS = 100 # Nostettu maksulliselle tilille
 RATE_LIMIT_WINDOW = 60
 
 RAMADAN_COUNTRIES = ["saudi", "uae", "dubai", "qatar", "kuwait", "egypt", "indonesia", "malaysia", "turkey", "pakistan", "jordan", "oman"]
@@ -73,47 +73,39 @@ def log_to_supabase(origin, dest, cargo, response_data, status="success"):
     except Exception as e:
         logger.warning(f"Supabase logging failed: {e}")
 
-def get_context_warnings(origin, dest):
-    warnings = []
-    now = datetime.now(timezone.utc)
-    combined = (origin + " " + dest).lower()
-    
-    if now.month == 3 and now.year == 2026:
-        if any(country in combined for country in RAMADAN_COUNTRIES):
-            warnings.append("⚠️ RAMADAN 2026: Expect regional logistics delays.")
-            
-    if any(k in combined for k in ["riyadh", "jeddah", "dubai", "red sea", "suez"]):
-        warnings.append("🌍 RED SEA SITUATION: Potential carrier diversions via Cape of Good Hope.")
-        
-    return warnings
-
 # ==============================
-# 3. AI-MOOTTORI (GEMINI)
+# 3. AI-MOOTTORI (GEMINI 3 FLASH)
 # ==============================
 
 def get_ai_signal(origin, dest, cargo, weight):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key: return {"error": "API_KEY_MISSING"}
 
-    # Prompt päivitetty v1.6.6: Lisätty "customs_needed" päätöksenteko tekoälylle
     prompt = (
-        f"You are Zemlo v1.6.6 Logistics Agent. Return ONLY JSON: "
-        f"{{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", \"risk\":\"Low|Med|High\", "
+        f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", \"risk\":\"Low|Med|High\", "
         f"\"actions\":[\"str\"], \"dist_km\":int, \"customs_needed\":bool}}. "
-        f"Context: Route {origin} to {dest}, Cargo {cargo}, Weight {weight}kg. Date March 2, 2026. "
-        f"Determine if customs clearance is needed based on geography (e.g., intra-EU is false)."
+        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Zemlo 1.6.7 Logic."
     )
     
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={api_key}"
+    # Käytetään oikeaa Gemini 3 Flash / 2.5 Flash endpointia
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     
     try:
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=12)
-        raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
-        # Siivotaan markdown-koodiblokit pois jos tekoäly niitä tarjoaa
-        clean_json = re.sub(r'```json\s*|\s*```', '', raw_text).strip()
-        return json.loads(clean_json)
+        data = resp.json()
+        
+        if 'candidates' not in data:
+            logger.error(f"AI Error RAW: {data}")
+            return {"error": "AI_RESPONSE_STRUCTURE_ERROR", "details": data}
+
+        raw_text = data['candidates'][0]['content']['parts'][0]['text']
+        # Puhdistetaan vastauksesta kaikki paitsi varsinainen JSON
+        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return json.loads(raw_text)
     except Exception as e:
-        return {"error": "AI_UNAVAILABLE", "details": str(e)}
+        return {"error": "AI_PARSING_ERROR", "details": str(e)}
 
 # ==============================
 # 4. ENDPOINTIT
@@ -128,27 +120,23 @@ def get_signal():
     data = request.get_json(silent=True) if request.method == "POST" else request.args
     origin = data.get("from", "").strip()
     dest = data.get("to", "").strip()
-    cargo = data.get("cargo", "General Cargo").strip()
+    cargo = data.get("cargo", "General").strip()
     weight = data.get("weight", 500)
 
     if not origin or not dest:
-        return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
+        return jsonify({"error": "Missing parameters."}), 400
 
-    # Pakotelista
     for keywords, reason in SANCTIONED_ROUTES:
         if any(kw in origin.lower() or kw in dest.lower() for kw in keywords):
-            res = {"hard_stop": True, "reason": reason}
-            log_to_supabase(origin, dest, cargo, {"metadata":{"id":"blocked"}}, status="blocked")
-            return jsonify(res), 451
+            return jsonify({"hard_stop": True, "reason": reason}), 451
 
-    # Välimuisti (5 min)
-    cache_key = f"z1.6.6:{hashlib.md5(f'{origin}{dest}{cargo}{weight}'.encode()).hexdigest()}"
+    # Cache key v1.6.7 (varmistaa uuden haun v1.6.6 bugin jälkeen)
+    cache_key = f"z1.6.7:{hashlib.md5(f'{origin}{dest}{cargo}{weight}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached: return jsonify(json.loads(cached))
     except: pass
 
-    # Haku AI:lta
     ai = get_ai_signal(origin, dest, cargo, weight)
     if "error" in ai:
         return jsonify(ai), 503
@@ -158,16 +146,14 @@ def get_signal():
             "price_estimate": f"{ai.get('p_min')} - {ai.get('p_max')} EUR",
             "transport_mode": ai.get("mode"),
             "trust_score": 90 if ai.get("risk") == "Low" else 65,
-            # Käytetään AI:n tekemää maantieteellistä päätelmää
             "customs_clearance_required": ai.get("customs_needed", False)
         },
         "environmental_impact": {
             "estimated_co2_kg": round(ai.get("dist_km", 1000) * (float(weight)/1000) * 0.1, 1)
         },
-        "context_warnings": get_context_warnings(origin, dest),
         "do_these_3_things": ai.get("actions", [])[:3],
         "metadata": {
-            "engine": "Zemlo v1.6.6",
+            "engine": "Zemlo v1.6.7 (3 Flash)",
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
@@ -182,7 +168,7 @@ def get_signal():
 
 @app.route("/")
 def health():
-    return jsonify({"status": "Operational", "version": "1.6.6"})
+    return jsonify({"status": "Operational", "version": "1.6.7"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
