@@ -39,7 +39,7 @@ EUR_ZONE = [
     "estonia", "tallinn", "latvia", "riga", "lithuania", "vilnius",
     "portugal", "lisbon", "greece", "athens", "ireland", "dublin",
     "luxembourg", "malta", "cyprus", "nicosia",
-    "switzerland", "zurich", "bern", "norway", "iceland",
+    "switzerland", "zurich", "bern", "iceland",
     "serbia", "belgrade", "balkans", "ukraine", "kyiv"
 ]
 
@@ -86,8 +86,6 @@ def determine_currency(origin_clean, dest_clean):
     - Toinen tai molemmat USD-vyöhykkeessä → USD
     - Tuntematon reitti → USD (kansainvälinen standardi)
     """
-    combined = origin_clean + " " + dest_clean
-
     is_eur_origin = any(z in origin_clean for z in EUR_ZONE)
     is_eur_dest   = any(z in dest_clean   for z in EUR_ZONE)
     is_usd_origin = any(z in origin_clean for z in USD_ZONE)
