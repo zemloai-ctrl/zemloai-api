@@ -7,83 +7,47 @@ from upstash_redis import Redis
 from datetime import datetime, timezone
 from supabase import create_client, Client
 
-# 1. Alustus ja konfiguraatio
+# 1. Alustus
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.8.6")
+logger = logging.getLogger("Zemlo-v1.8.7")
 
-# Rate limiting (Memory-storage Render-yhteensopivuuteen)
-limiter = Limiter(
-    key_func=get_remote_address,
-    app=app,
-    default_limits=["60 per minute"],
-    storage_uri="memory://"
-)
+limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["100 per minute"], storage_uri="memory://")
 
-# Yhteydet
-redis_client = Redis(
-    url=os.environ.get("UPSTASH_REDIS_REST_URL"),
-    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-)
-supabase: Client = create_client(
-    os.environ.get("SUPABASE_URL"),
-    os.environ.get("SUPABASE_KEY")
-)
+redis_client = Redis(url=os.environ.get("UPSTASH_REDIS_REST_URL"), token=os.environ.get("UPSTASH_REDIS_REST_TOKEN"))
+supabase: Client = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
 
-# 2. Apuohjelmat
+# 2. Älykäs Logiikka (The Shield & Physics)
 def compute_trust(ai_data):
     risk_map = {"Low": 95, "Med": 70, "High": 40}
-    base_score = risk_map.get(ai_data.get("risk", "Med"), 50)
-    if ai_data.get("dist_km", 0) == 0:
-        base_score -= 10
-    return max(min(base_score, 100), 10)
+    score = risk_map.get(ai_data.get("risk", "Med"), 50)
+    if ai_data.get("dist_km", 0) == 0: score -= 10
+    return max(min(score, 100), 10)
 
 def compute_co2(mode, dist_km, weight_kg):
     try:
         factors = {"Air": 0.5, "Road": 0.1, "Rail": 0.03, "Sea": 0.015}
-        factor = factors.get(mode, 0.1)
-        return round(float(dist_km) * (float(weight_kg) / 1000) * factor, 1)
-    except (ValueError, TypeError, ZeroDivisionError):
-        return 0.0
+        return round(float(dist_km) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 1)
+    except: return 0.0
 
-def get_context_warnings(origin_clean, dest_clean, cargo_clean):
-    warnings = []
-    text = origin_clean + " " + dest_clean
-    now = datetime.now(timezone.utc)
-
-    if now.year == 2026 and ((now.month == 2 and now.day >= 15) or (now.month == 3 and now.day <= 25)):
-        ram_countries = ["saudi", "uae", "dubai", "qatar", "egypt", "turkey", "indonesia", "malaysia"]
-        if any(c in text for c in ram_countries):
-            warnings.append("Ramadan 2026: Expect local delivery delays and altered hours.")
-
-    if any(p in text for p in ["suez", "red sea", "aden", "yemen", "djibouti"]):
-        warnings.append("Red Sea Transit: Ongoing risk. Expect insurance surcharges.")
-
-    if any(word in cargo_clean for word in ["battery", "batteries", "hazardous", "chemical", "acid"]):
-        warnings.append("Hazardous Cargo: ADR/IMDG documentation and UN-rated packaging mandatory.")
-
-    return warnings
-
-# 3. Gemini Integrointi
+# 3. Gemini Integrointi (Ulkoistettu äly)
 def get_ai_signal(origin, dest, cargo, weight):
-    s_origin, s_dest, s_cargo = origin[:80], dest[:80], cargo[:80]
-
+    # Promptiin lisätty ohje tunnistaa paikalliset olosuhteet (kuten Ramadan)
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
-        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool}}. "
-        f"Route: {s_origin} to {s_dest}, Cargo: {s_cargo}, {weight}kg. Date: March 2026."
+        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
+        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Date: March 2026. "
+        f"IMPORTANT: If the route is affected by Ramadan 2026 or local holidays, mention it in 'note'."
     )
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ.get('GEMINI_API_KEY')}"
     
     try:
-        # FIX: Timeout nostettu 20 sekuntiin monimutkaisia hakuja varten
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
         resp.raise_for_status()
         raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        if not json_match: return None
-        return json.loads(json_match.group())
+        return json.loads(json_match.group()) if json_match else None
     except Exception as e:
         logger.error(f"Gemini Error: {e}")
         return None
@@ -91,68 +55,55 @@ def get_ai_signal(origin, dest, cargo, weight):
 # 4. Reitit
 @app.route("/robots.txt")
 def robots_txt():
-    # BOT STRATEGY: Toivotetaan AI-agentit tervetulleeksi
-    content = "User-agent: *\nAllow: /\nDisallow: /admin\n\n# Zemlo AI - The Global Logistics Signal Hub 2026"
-    return Response(content, mimetype="text/plain")
+    return Response("User-agent: *\nAllow: /\n\n# Zemlo AI - The Signal Hub 2026", mimetype="text/plain")
 
 @app.route("/signal", methods=["GET", "POST"])
-@limiter.limit("60 per minute")
 def get_signal():
     data = (request.get_json(silent=True) or {}) if request.method == "POST" else request.args
+    origin, dest, cargo = data.get("from", ""), data.get("to", ""), data.get("cargo", "General")
+    
+    try: weight = float(data.get("weight", 500))
+    except: return jsonify({"error": "Invalid weight"}), 400
 
-    origin = data.get("from", "").strip()
-    dest = data.get("to", "").strip()
-    cargo = data.get("cargo", "General").strip()
+    if not origin or not dest: return jsonify({"error": "Missing params"}), 400
 
-    try:
-        weight = float(data.get("weight", 500))
-        if weight <= 0: return jsonify({"error": "Weight must be positive."}), 400
-    except (ValueError, TypeError):
-        return jsonify({"error": "Invalid weight format."}), 400
+    # THE SHIELD (Blacklist & Hazardous)
+    o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
+    sanctions = ["russia", "venäjä", "petersburg", "moscow", "belarus", "iran", "syria", "north korea"]
+    if any(s in o_c for s in sanctions) or any(s in d_c for s in sanctions):
+        return jsonify({"hard_stop": True, "reason": "Sanctions: Route blocked."}), 451
 
-    if not origin or not dest:
-        return jsonify({"error": "Missing parameters."}), 400
-
-    origin_clean, dest_clean, cargo_clean = origin.lower().replace("_", " "), dest.lower().replace("_", " "), cargo.lower().replace("_", " ")
-
-    # THE SHIELD: Sanctions
-    sanctions = ["russia", "petersburg", "moscow", "iran", "tehran", "north korea", "belarus", "syria", "venäjä"]
-    if any(s in origin_clean for s in sanctions) or any(s in dest_clean for s in sanctions):
-        return jsonify({"hard_stop": True, "reason": "Sanctions: Automated quoting disabled.", "metadata": {"engine": "Zemlo OS 1.8.6 (The Shield)"}}), 451
-
-    # Cache
-    cache_key = f"z1.8.6:{hashlib.md5(f'{origin_clean}{dest_clean}{cargo_clean}{int(weight)}'.encode()).hexdigest()}"
+    is_hazardous = any(w in c_c for w in ["battery", "hazardous", "chemical", "acid", "lithium"])
+    
+    # Cache Check
+    cache_key = f"z1.8.7:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
-        if cached:
-            res = json.loads(cached)
-            res["metadata"]["cache_hit"] = True
-            return jsonify(res)
+        if cached: return jsonify({**json.loads(cached), "metadata": {**json.loads(cached)["metadata"], "cache_hit": True}})
     except: pass
 
     ai = get_ai_signal(origin, dest, cargo, weight)
-    if not ai or not all(k in ai for k in ["p_min", "p_max", "mode", "actions"]):
-        return jsonify({"error": "Logistics engine busy. Please retry."}), 503
+    if not ai: return jsonify({"error": "Engine busy"}), 503
 
-    trust = compute_trust(ai)
-    co2 = compute_co2(ai.get("mode"), ai.get("dist_km", 0), weight)
-    warnings = get_context_warnings(origin_clean, dest_clean, cargo_clean)
-    is_hazardous = any(word in cargo_clean for word in ["battery", "batteries", "hazardous", "chemical", "acid"])
+    # Koostetaan vastaus
+    warnings = []
+    if is_hazardous: warnings.append("Hazardous Cargo: Special handling and ADR/IMDG documentation required.")
+    if ai.get("note"): warnings.append(ai["note"]) # Geminin dynaaminen huomio (esim. Ramadan)
 
     response = {
         "signal": {
             "price_estimate": f"{ai['p_min']} - {ai['p_max']} EUR",
             "transport_mode": ai['mode'],
-            "trust_score": trust,
+            "trust_score": compute_trust(ai),
             "risk_level": ai.get("risk", "Med"),
             "customs_clearance_required": ai.get("customs", True),
             "hazardous_flag": is_hazardous
         },
-        "environmental_impact": {"estimated_co2_kg": co2},
+        "environmental_impact": {"estimated_co2_kg": compute_co2(ai['mode'], ai.get("dist_km", 0), weight)},
         "context_warnings": warnings,
-        "do_these_3_things": (ai['actions'] + ["Verify documents", "Confirm insurance", "Check hours"])[:3],
+        "do_these_3_things": (ai.get("actions", []) + ["Check documents", "Verify route"])[:3],
         "metadata": {
-            "engine": "Zemlo v1.8.6 (2.5 Flash)",
+            "engine": "Zemlo v1.8.7 (2.5 Flash)",
             "cache_hit": False,
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -160,22 +111,19 @@ def get_signal():
     }
 
     try:
-        redis_client.set(cache_key, json.dumps(response), ex=300)
+        redis_client.set(cache_key, json.dumps(response), ex=600)
         ua = request.headers.get('User-Agent', '').lower()
         user_type = next((a.upper() for a in ['gptbot', 'chatgpt', 'claude', 'anthropic', 'perplexity', 'gemini', 'copilot'] if a in ua), "HUMAN")
         supabase.table("signals").insert({
-            "origin": origin, "destination": dest, "cargo": cargo, "status": "success",
-            "price_estimate": response["signal"]["price_estimate"],
-            "trust_score": trust, "mode": ai['mode'], "type": user_type,
-            "co2_kg": co2, "bot_name": ua[:100]
+            "origin": origin, "destination": dest, "cargo": cargo, "price_estimate": response["signal"]["price_estimate"],
+            "mode": ai['mode'], "type": user_type, "bot_name": ua[:100]
         }).execute()
-    except Exception as e: logger.warning(f"Log fail: {e}")
+    except: pass
 
     return jsonify(response)
 
 @app.route("/")
-def health():
-    return jsonify({"status": "Operational", "version": "1.8.6", "shield": "Active", "agents": "Welcome"})
+def health(): return jsonify({"status": "Operational", "version": "1.8.7"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
