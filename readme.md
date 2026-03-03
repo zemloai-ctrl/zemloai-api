@@ -133,7 +133,7 @@ curl "https://zemloai-api.onrender.com/health"
 | Field | Type | Description |
 |-------|------|-------------|
 | `price_estimate` | string | Freight cost range in EUR |
-| `currency` | string | Always EUR in v1.9.x |
+| `currency` | string | `EUR` for intra-European routes, `USD` for all other routes (auto-detected) |
 | `transport_mode` | string | `Road`, `Sea`, `Air`, or `Rail` |
 | `trust_score` | int | Data confidence score 10–95. Based on risk level and route data quality — not cargo difficulty |
 | `risk_level` | string | `Low`, `Med`, or `High` |
@@ -254,6 +254,7 @@ The following features are under active development. Integrate now and they will
 | **Webhook Support** | — | Push notifications to your endpoint when route risk changes or disruptions detected |
 | **Freight Forwarding** | `signal.forwarder` | Recommended licensed freight forwarder for complex routes |
 | **HS Code Lookup** | `signal.hs_code` | Harmonized System code suggestion based on cargo description |
+| **Live FX Rates** | `signal.fx_rate` | Real-time EUR/USD conversion via FX API (v1.9.6 uses fixed rate 1.09) |
 
 > Want to be notified when a feature launches? Contact the Zemlo AI team at **[zemloai.com](https://zemloai.com)**.
 
