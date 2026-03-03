@@ -5,3 +5,4 @@ upstash-redis
 supabase
 gunicorn
 python-dotenv
+flask-limiter
