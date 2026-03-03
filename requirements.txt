@@ -1,8 +1,13 @@
-flask
-flask-cors
-requests
-upstash-redis
-supabase
-gunicorn
-python-dotenv
-flask-limiter
+# Web Server & Core
+flask>=3.0.0
+gunicorn>=21.2.0
+python-dotenv>=1.0.0
+
+# API & Security
+flask-cors>=4.0.0
+flask-limiter>=3.5.0
+requests>=2.31.0
+
+# Database & Cache
+upstash-redis>=1.0.0
+supabase>=2.3.0
