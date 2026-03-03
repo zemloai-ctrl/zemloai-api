@@ -9,16 +9,16 @@ from supabase import create_client, Client
 
 # 1. Alustus ja konfiguraatio
 app = Flask(__name__)
-CORS(app)  # Tuotannossa: CORS(app, origins=["https://sinun-sivusi.fi"])
+CORS(app)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.8.4")
+logger = logging.getLogger("Zemlo-v1.8.5")
 
-# Rate limiting (FIX: estää Gemini API-kvoottien kulumisen spammilla)
+# Rate limiting (FIX: Käytetään memory-storagea Render-yhteensopivuuden varmistamiseksi)
 limiter = Limiter(
-    get_remote_address,
+    key_func=get_remote_address,
     app=app,
     default_limits=["60 per minute"],
-    storage_uri=os.environ.get("UPSTASH_REDIS_REST_URL", "memory://")
+    storage_uri="memory://"
 )
 
 # Yhteydet
@@ -52,7 +52,6 @@ def get_context_warnings(origin_clean, dest_clean, cargo_clean):
     text = origin_clean + " " + dest_clean
     now = datetime.now(timezone.utc)
 
-    # Ramadan 2026 dynaaminen ikkuna
     if now.year == 2026 and (
         (now.month == 2 and now.day >= 15) or
         (now.month == 3 and now.day <= 25)
@@ -71,58 +70,42 @@ def get_context_warnings(origin_clean, dest_clean, cargo_clean):
 
 # 3. Gemini Integrointi
 def get_ai_signal(origin, dest, cargo, weight):
-    # FIX: Prompt-injektion esto - rajoitetaan syötteiden pituutta
-    s_origin = origin[:80]
-    s_dest = dest[:80]
-    s_cargo = cargo[:80]
+    s_origin, s_dest, s_cargo = origin[:80], dest[:80], cargo[:80]
 
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
         f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool}}. "
-        f"Route: {s_origin} to {s_dest}, Cargo: {s_cargo}, {weight}kg. Date: March 2026. "
-        f"Rules: For industrial_batteries/electronics mention UN3480/MSDS in actions."
+        f"Route: {s_origin} to {s_dest}, Cargo: {s_cargo}, {weight}kg. Date: March 2026."
     )
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
-        f":generateContent?key={os.environ.get('GEMINI_API_KEY')}"
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ.get('GEMINI_API_KEY')}"
+    
     try:
-        resp = requests.post(
-            url,
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=10
-        )
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=10)
         resp.raise_for_status()
         raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        if not json_match:
-            return None
+        if not json_match: return None
         return json.loads(json_match.group())
     except requests.Timeout:
         logger.error("Gemini timeout")
-        return None
     except requests.HTTPError as e:
         logger.error(f"Gemini HTTP error: {e}")
-        return None
-    except (KeyError, json.JSONDecodeError) as e:
+    except (KeyError, json.JSONDecodeError, IndexError) as e:
         logger.error(f"Gemini parse error: {e}")
-        return None
     except Exception as e:
         logger.error(f"Gemini unknown error: {e}")
-        return None
+    return None
 
 # 4. Pääreitti /signal
 @app.route("/signal", methods=["GET", "POST"])
 @limiter.limit("60 per minute")
 def get_signal():
-    # FIX: data voi olla None jos POST-body ei ole validia JSONia
     data = (request.get_json(silent=True) or {}) if request.method == "POST" else request.args
 
     origin = data.get("from", "").strip()
     dest = data.get("to", "").strip()
     cargo = data.get("cargo", "General").strip()
 
-    # FIX: Tyypitetyt poikkeukset weight-validoinnissa
     try:
         weight = float(data.get("weight", 500))
         if weight <= 0:
@@ -133,40 +116,31 @@ def get_signal():
     if not origin or not dest:
         return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
 
-    # THE SHIELD: Blacklist
     origin_clean = origin.lower().replace("_", " ")
     dest_clean = dest.lower().replace("_", " ")
     cargo_clean = cargo.lower().replace("_", " ")
 
-    sanctions = [
-        "russia", "petersburg", "moscow", "iran", "tehran",
-        "north korea", "belarus", "syria", "venäjä"
-    ]
-    # FIX: Selkeä two-sided sanctions check
+    sanctions = ["russia", "petersburg", "moscow", "iran", "tehran", "north korea", "belarus", "syria", "venäjä"]
     if any(s in origin_clean for s in sanctions) or any(s in dest_clean for s in sanctions):
         return jsonify({
             "hard_stop": True,
-            "reason": "Sanctions/High Risk Zone: Automated quoting disabled per international regulations.",
-            "metadata": {"engine": "Zemlo OS 1.8.4 (The Shield)"}
+            "reason": "Sanctions/High Risk Zone: Automated quoting disabled.",
+            "metadata": {"engine": "Zemlo OS 1.8.5 (The Shield)"}
         }), 451
 
-    # Cache — FIX: int(weight) estää float/int hash-epäosuman
-    cache_key = f"z1.8.4:{hashlib.md5(f'{origin_clean}{dest_clean}{cargo_clean}{int(weight)}'.encode()).hexdigest()}"
+    cache_key = f"z1.8.5:{hashlib.md5(f'{origin_clean}{dest_clean}{cargo_clean}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached:
             res = json.loads(cached)
             res["metadata"]["cache_hit"] = True
             return jsonify(res)
-    except Exception:
-        pass  # Redis-hikat eivät kaada palvelua
+    except: pass
 
-    # AI Prosessointi
     ai = get_ai_signal(origin, dest, cargo, weight)
 
-    # FIX: Tarkistetaan kaikki pakolliset kentät ennen käyttöä
     if not ai or not all(k in ai for k in ["p_min", "p_max", "mode", "actions"]):
-        return jsonify({"error": "Logistics engine busy. Please retry in a moment."}), 503
+        return jsonify({"error": "Logistics engine busy. Please retry."}), 503
 
     trust = compute_trust(ai)
     co2 = compute_co2(ai.get("mode"), ai.get("dist_km", 0), weight)
@@ -184,23 +158,15 @@ def get_signal():
         },
         "environmental_impact": {"estimated_co2_kg": co2},
         "context_warnings": warnings,
-        # FIX: Fallback varmistaa aina 3 actionia
-        "do_these_3_things": (
-            ai['actions'] + [
-                "Verify all shipping documents",
-                "Confirm final insurance coverage",
-                "Check local delivery hours"
-            ]
-        )[:3],
+        "do_these_3_things": (ai['actions'] + ["Verify documents", "Confirm insurance", "Check hours"])[:3],
         "metadata": {
-            "engine": "Zemlo v1.8.4 (2.5 Flash)",
+            "engine": "Zemlo v1.8.5 (2.5 Flash)",
             "cache_hit": False,
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
     }
 
-    # Tallennus ja Analytiikka
     try:
         redis_client.set(cache_key, json.dumps(response), ex=300)
         ua = request.headers.get('User-Agent', '').lower()
@@ -211,16 +177,10 @@ def get_signal():
                 break
 
         supabase.table("signals").insert({
-            "origin": origin,
-            "destination": dest,
-            "cargo": cargo,
-            "status": "success",
+            "origin": origin, "destination": dest, "cargo": cargo, "status": "success",
             "price_estimate": response["signal"]["price_estimate"],
-            "trust_score": trust,
-            "mode": ai['mode'],
-            "type": user_type,
-            "co2_kg": co2,  # FIX: Palautettu analytiikkaan
-            "bot_name": ua[:100]
+            "trust_score": trust, "mode": ai['mode'], "type": user_type,
+            "co2_kg": co2, "bot_name": ua[:100]
         }).execute()
     except Exception as e:
         logger.warning(f"Logging failed: {e}")
@@ -229,12 +189,7 @@ def get_signal():
 
 @app.route("/")
 def health():
-    return jsonify({
-        "status": "Operational",
-        "version": "1.8.4",
-        "shield": "Active",
-        "rate_limit": "60 req/min"
-    })
+    return jsonify({"status": "Operational", "version": "1.8.5", "shield": "Active"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
