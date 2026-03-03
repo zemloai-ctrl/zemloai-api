@@ -1,5 +1,5 @@
 import os, json, requests, hashlib, uuid, re, logging
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -11,9 +11,9 @@ from supabase import create_client, Client
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.8.5")
+logger = logging.getLogger("Zemlo-v1.8.6")
 
-# Rate limiting (FIX: Käytetään memory-storagea Render-yhteensopivuuden varmistamiseksi)
+# Rate limiting (Memory-storage Render-yhteensopivuuteen)
 limiter = Limiter(
     key_func=get_remote_address,
     app=app,
@@ -52,10 +52,7 @@ def get_context_warnings(origin_clean, dest_clean, cargo_clean):
     text = origin_clean + " " + dest_clean
     now = datetime.now(timezone.utc)
 
-    if now.year == 2026 and (
-        (now.month == 2 and now.day >= 15) or
-        (now.month == 3 and now.day <= 25)
-    ):
+    if now.year == 2026 and ((now.month == 2 and now.day >= 15) or (now.month == 3 and now.day <= 25)):
         ram_countries = ["saudi", "uae", "dubai", "qatar", "egypt", "turkey", "indonesia", "malaysia"]
         if any(c in text for c in ram_countries):
             warnings.append("Ramadan 2026: Expect local delivery delays and altered hours.")
@@ -80,23 +77,24 @@ def get_ai_signal(origin, dest, cargo, weight):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ.get('GEMINI_API_KEY')}"
     
     try:
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=10)
+        # FIX: Timeout nostettu 20 sekuntiin monimutkaisia hakuja varten
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
         resp.raise_for_status()
         raw_text = resp.json()['candidates'][0]['content']['parts'][0]['text']
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if not json_match: return None
         return json.loads(json_match.group())
-    except requests.Timeout:
-        logger.error("Gemini timeout")
-    except requests.HTTPError as e:
-        logger.error(f"Gemini HTTP error: {e}")
-    except (KeyError, json.JSONDecodeError, IndexError) as e:
-        logger.error(f"Gemini parse error: {e}")
     except Exception as e:
-        logger.error(f"Gemini unknown error: {e}")
-    return None
+        logger.error(f"Gemini Error: {e}")
+        return None
 
-# 4. Pääreitti /signal
+# 4. Reitit
+@app.route("/robots.txt")
+def robots_txt():
+    # BOT STRATEGY: Toivotetaan AI-agentit tervetulleeksi
+    content = "User-agent: *\nAllow: /\nDisallow: /admin\n\n# Zemlo AI - The Global Logistics Signal Hub 2026"
+    return Response(content, mimetype="text/plain")
+
 @app.route("/signal", methods=["GET", "POST"])
 @limiter.limit("60 per minute")
 def get_signal():
@@ -108,27 +106,22 @@ def get_signal():
 
     try:
         weight = float(data.get("weight", 500))
-        if weight <= 0:
-            return jsonify({"error": "Weight must be a positive number."}), 400
+        if weight <= 0: return jsonify({"error": "Weight must be positive."}), 400
     except (ValueError, TypeError):
-        return jsonify({"error": "Invalid weight format. Use numbers only."}), 400
+        return jsonify({"error": "Invalid weight format."}), 400
 
     if not origin or not dest:
-        return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
+        return jsonify({"error": "Missing parameters."}), 400
 
-    origin_clean = origin.lower().replace("_", " ")
-    dest_clean = dest.lower().replace("_", " ")
-    cargo_clean = cargo.lower().replace("_", " ")
+    origin_clean, dest_clean, cargo_clean = origin.lower().replace("_", " "), dest.lower().replace("_", " "), cargo.lower().replace("_", " ")
 
+    # THE SHIELD: Sanctions
     sanctions = ["russia", "petersburg", "moscow", "iran", "tehran", "north korea", "belarus", "syria", "venäjä"]
     if any(s in origin_clean for s in sanctions) or any(s in dest_clean for s in sanctions):
-        return jsonify({
-            "hard_stop": True,
-            "reason": "Sanctions/High Risk Zone: Automated quoting disabled.",
-            "metadata": {"engine": "Zemlo OS 1.8.5 (The Shield)"}
-        }), 451
+        return jsonify({"hard_stop": True, "reason": "Sanctions: Automated quoting disabled.", "metadata": {"engine": "Zemlo OS 1.8.6 (The Shield)"}}), 451
 
-    cache_key = f"z1.8.5:{hashlib.md5(f'{origin_clean}{dest_clean}{cargo_clean}{int(weight)}'.encode()).hexdigest()}"
+    # Cache
+    cache_key = f"z1.8.6:{hashlib.md5(f'{origin_clean}{dest_clean}{cargo_clean}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached:
@@ -138,7 +131,6 @@ def get_signal():
     except: pass
 
     ai = get_ai_signal(origin, dest, cargo, weight)
-
     if not ai or not all(k in ai for k in ["p_min", "p_max", "mode", "actions"]):
         return jsonify({"error": "Logistics engine busy. Please retry."}), 503
 
@@ -160,7 +152,7 @@ def get_signal():
         "context_warnings": warnings,
         "do_these_3_things": (ai['actions'] + ["Verify documents", "Confirm insurance", "Check hours"])[:3],
         "metadata": {
-            "engine": "Zemlo v1.8.5 (2.5 Flash)",
+            "engine": "Zemlo v1.8.6 (2.5 Flash)",
             "cache_hit": False,
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -170,26 +162,20 @@ def get_signal():
     try:
         redis_client.set(cache_key, json.dumps(response), ex=300)
         ua = request.headers.get('User-Agent', '').lower()
-        user_type = "HUMAN"
-        for agent in ['gptbot', 'chatgpt', 'claude', 'anthropic', 'perplexity', 'gemini', 'copilot']:
-            if agent in ua:
-                user_type = agent.upper()
-                break
-
+        user_type = next((a.upper() for a in ['gptbot', 'chatgpt', 'claude', 'anthropic', 'perplexity', 'gemini', 'copilot'] if a in ua), "HUMAN")
         supabase.table("signals").insert({
             "origin": origin, "destination": dest, "cargo": cargo, "status": "success",
             "price_estimate": response["signal"]["price_estimate"],
             "trust_score": trust, "mode": ai['mode'], "type": user_type,
             "co2_kg": co2, "bot_name": ua[:100]
         }).execute()
-    except Exception as e:
-        logger.warning(f"Logging failed: {e}")
+    except Exception as e: logger.warning(f"Log fail: {e}")
 
     return jsonify(response)
 
 @app.route("/")
 def health():
-    return jsonify({"status": "Operational", "version": "1.8.5", "shield": "Active"})
+    return jsonify({"status": "Operational", "version": "1.8.6", "shield": "Active", "agents": "Welcome"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
