@@ -11,7 +11,7 @@ from supabase import create_client, Client
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.8.7")
+logger = logging.getLogger("Zemlo-v1.8.8")
 
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["100 per minute"], storage_uri="memory://")
 
@@ -31,14 +31,15 @@ def compute_co2(mode, dist_km, weight_kg):
         return round(float(dist_km) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 1)
     except: return 0.0
 
-# 3. Gemini Integrointi (Ulkoistettu äly)
+# 3. Gemini Integrointi (Ulkoistettu äly tiukemmalla ohjeistuksella)
 def get_ai_signal(origin, dest, cargo, weight):
-    # Promptiin lisätty ohje tunnistaa paikalliset olosuhteet (kuten Ramadan)
+    # Promptia tarkennettu: note saa olla vain jos se on RELEVANTTI reitille
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
         f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
         f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Date: March 2026. "
-        f"IMPORTANT: If the route is affected by Ramadan 2026 or local holidays, mention it in 'note'."
+        f"IMPORTANT: If AND ONLY IF the origin or destination is a region where Ramadan 2026 or local holidays "
+        f"SIGNIFICANTLY impact logistics, mention it in 'note'. Otherwise, keep 'note' as an empty string (\"\")."
     )
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ.get('GEMINI_API_KEY')}"
     
@@ -75,11 +76,14 @@ def get_signal():
 
     is_hazardous = any(w in c_c for w in ["battery", "hazardous", "chemical", "acid", "lithium"])
     
-    # Cache Check
-    cache_key = f"z1.8.7:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
+    # Cache Check (Päivitetty v1.8.8)
+    cache_key = f"z1.8.8:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
-        if cached: return jsonify({**json.loads(cached), "metadata": {**json.loads(cached)["metadata"], "cache_hit": True}})
+        if cached: 
+            res = json.loads(cached)
+            res["metadata"]["cache_hit"] = True
+            return jsonify(res)
     except: pass
 
     ai = get_ai_signal(origin, dest, cargo, weight)
@@ -88,7 +92,9 @@ def get_signal():
     # Koostetaan vastaus
     warnings = []
     if is_hazardous: warnings.append("Hazardous Cargo: Special handling and ADR/IMDG documentation required.")
-    if ai.get("note"): warnings.append(ai["note"]) # Geminin dynaaminen huomio (esim. Ramadan)
+    # Lisätään note vain, jos se ei ole tyhjä (estetään Tallinnan Ramadanit)
+    if ai.get("note") and ai["note"].strip(): 
+        warnings.append(ai["note"])
 
     response = {
         "signal": {
@@ -103,7 +109,7 @@ def get_signal():
         "context_warnings": warnings,
         "do_these_3_things": (ai.get("actions", []) + ["Check documents", "Verify route"])[:3],
         "metadata": {
-            "engine": "Zemlo v1.8.7 (2.5 Flash)",
+            "engine": "Zemlo v1.8.8 (2.5 Flash)",
             "cache_hit": False,
             "id": str(uuid.uuid4())[:8],
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -123,7 +129,7 @@ def get_signal():
     return jsonify(response)
 
 @app.route("/")
-def health(): return jsonify({"status": "Operational", "version": "1.8.7"})
+def health(): return jsonify({"status": "Operational", "version": "1.8.8"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
