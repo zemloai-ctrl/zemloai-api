@@ -7,7 +7,6 @@ from upstash_redis import Redis
 from datetime import datetime, timezone
 from supabase import create_client, Client
 
-# 1. Alustus
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
@@ -16,9 +15,8 @@ logger = logging.getLogger("Zemlo-v1.8.8")
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["100 per minute"], storage_uri="memory://")
 
 redis_client = Redis(url=os.environ.get("UPSTASH_REDIS_REST_URL"), token=os.environ.get("UPSTASH_REDIS_REST_TOKEN"))
-supabase: Client = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
+supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
 
-# 2. Älykäs Logiikka (The Shield & Physics)
 def compute_trust(ai_data):
     risk_map = {"Low": 95, "Med": 70, "High": 40}
     score = risk_map.get(ai_data.get("risk", "Med"), 50)
@@ -31,9 +29,7 @@ def compute_co2(mode, dist_km, weight_kg):
         return round(float(dist_km) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 1)
     except: return 0.0
 
-# 3. Gemini Integrointi (Ulkoistettu äly tiukemmalla ohjeistuksella)
 def get_ai_signal(origin, dest, cargo, weight):
-    # Promptia tarkennettu: note saa olla vain jos se on RELEVANTTI reitille
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
         f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
@@ -42,7 +38,6 @@ def get_ai_signal(origin, dest, cargo, weight):
         f"SIGNIFICANTLY impact logistics, mention it in 'note'. Otherwise, keep 'note' as an empty string (\"\")."
     )
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ.get('GEMINI_API_KEY')}"
-    
     try:
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
         resp.raise_for_status()
@@ -53,7 +48,6 @@ def get_ai_signal(origin, dest, cargo, weight):
         logger.error(f"Gemini Error: {e}")
         return None
 
-# 4. Reitit
 @app.route("/robots.txt")
 def robots_txt():
     return Response("User-agent: *\nAllow: /\n\n# Zemlo AI - The Signal Hub 2026", mimetype="text/plain")
@@ -62,21 +56,16 @@ def robots_txt():
 def get_signal():
     data = (request.get_json(silent=True) or {}) if request.method == "POST" else request.args
     origin, dest, cargo = data.get("from", ""), data.get("to", ""), data.get("cargo", "General")
-    
     try: weight = float(data.get("weight", 500))
     except: return jsonify({"error": "Invalid weight"}), 400
-
     if not origin or not dest: return jsonify({"error": "Missing params"}), 400
 
-    # THE SHIELD (Blacklist & Hazardous)
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
     sanctions = ["russia", "venäjä", "petersburg", "moscow", "belarus", "iran", "syria", "north korea"]
     if any(s in o_c for s in sanctions) or any(s in d_c for s in sanctions):
         return jsonify({"hard_stop": True, "reason": "Sanctions: Route blocked."}), 451
 
     is_hazardous = any(w in c_c for w in ["battery", "hazardous", "chemical", "acid", "lithium"])
-    
-    # Cache Check (Päivitetty v1.8.8)
     cache_key = f"z1.8.8:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
@@ -89,10 +78,8 @@ def get_signal():
     ai = get_ai_signal(origin, dest, cargo, weight)
     if not ai: return jsonify({"error": "Engine busy"}), 503
 
-    # Koostetaan vastaus
     warnings = []
     if is_hazardous: warnings.append("Hazardous Cargo: Special handling and ADR/IMDG documentation required.")
-    # Lisätään note vain, jos se ei ole tyhjä (estetään Tallinnan Ramadanit)
     if ai.get("note") and ai["note"].strip(): 
         warnings.append(ai["note"])
 
@@ -115,7 +102,6 @@ def get_signal():
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
     }
-
     try:
         redis_client.set(cache_key, json.dumps(response), ex=600)
         ua = request.headers.get('User-Agent', '').lower()
@@ -125,7 +111,6 @@ def get_signal():
             "mode": ai['mode'], "type": user_type, "bot_name": ua[:100]
         }).execute()
     except: pass
-
     return jsonify(response)
 
 @app.route("/")
