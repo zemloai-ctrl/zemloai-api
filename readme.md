@@ -1,19 +1,50 @@
 # 🚢 Zemlo AI API — Developer Documentation
 ### v1.9.5 · Logistics Intelligence for AI Agents & Developers
 
-> **Zemlo AI** is a logistics signal API built for developers, AI agents, and bot integrations.  
+> **Zemlo AI** is an independent logistics signal API built for developers, AI agents, and bot integrations.  
 > It returns real-time freight price estimates, transport recommendations, sanctions checks, hazardous cargo flags, and live disruption alerts — all in a single JSON call.  
 > 🌐 **[zemloai.com](https://zemloai.com)**
 
 > *"Zemlo AI does not promise perfect prices. It promises something more valuable: Better situational awareness than a guess."*
 
+> ⚖️ **Zemlo AI is carrier-neutral and vendor-independent.** We are not DHL, UPS, FedEx, or any freight company's sales tool. Zemlo AI exists to give AI agents and developers unbiased logistics intelligence — so your application can serve its users, not a carrier's bottom line.
+
+---
+
+## 🏆 Why Zemlo AI?
+
+Most logistics APIs are built by carriers — which means they only show you routes they profit from, require weeks of approval, and disappear when the route gets complex.
+
+Zemlo AI is different.
+
+| | Traditional Carrier API | Zemlo AI |
+|---|---|---|
+| **Neutral data** | ❌ Carrier-biased | ✅ Fully independent |
+| **Access** | ❌ 14-day approval, credit card, sales call | ✅ Zero friction — just call the API |
+| **Hard routes** | ❌ Fails on non-standard routes | ✅ Handles high-friction routes |
+| **Context** | ❌ Price only | ✅ News, sanctions, disasters, compliance |
+| **Actionable** | ❌ Numbers only | ✅ 3-step compliance checklist per shipment |
+
+**Zero Friction** — No API keys, no signups, no sales calls. One URL. One signal. Done.
+
+**Independent** — Not owned by DHL, UPS, FedEx or any carrier. Zemlo AI has no financial interest in which route you choose.
+
+**Edge Case King** — Handles non-EU complexity and high-friction routes where standard calculators fail. Helsinki → Serbia? Istanbul → Riyadh? Zemlo AI signals where others return errors.
+
+**Human-in-the-Loop Advice** — Every response includes `do_these_3_things`: a compliance checklist that tells your AI agent exactly what to do next. Not just a number — a plan.
+
+**Context-Aware** — Real-time news, GDACS disaster alerts, and sanctions checks are baked into every signal. Your AI agent gets the full picture, not just a price.
+
+> *This is what makes Zemlo AI a consultant, not just a calculator.*
+
 ---
 
 ## 👤 Who Is This For?
 
-- **AI agent developers** (OpenAI, Anthropic, Google, Perplexity, etc.) building bots that need logistics data
-- **E-commerce & ERP developers** adding shipping estimates to their platforms
+- **AI agent developers** (OpenAI, Anthropic, Google, Perplexity, etc.) building bots that need unbiased logistics data
+- **E-commerce & ERP developers** adding neutral shipping estimates to their platforms — without being locked into a single carrier
 - **Freight & supply chain engineers** looking for a lightweight, AI-native logistics signal layer
+- **Anyone** who wants logistics intelligence that works for the user, not for a shipping company's sales funnel
 
 ---
 
