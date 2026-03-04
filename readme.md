@@ -206,3 +206,17 @@ Zemlo AI is designed to be your logistics layer, not a competitor to your core f
 *🚢 Zemlo AI — The Global Logistics Signal.*
 *Built by one person in Finland. No team. No funding. Just signal.*
 *[zemloai.com](https://zemloai.com)*
+
+---
+
+## 🇫🇮 Origin
+
+Zemlo wasn't born in a Silicon Valley garage. It was built in Kokkola, Finland, during off-shifts at a chemical plant.
+
+I'm a 52-year-old single dad. No coding background. Last Christmas I wanted to send a package to my girlfriend's parents in the Philippines and nobody — not the post office, not DHL, not anyone — could give me a straight answer on price or how to do it. Everyone just said *"it's probably expensive."*
+
+That frustrated me enough to spend my days off building something that answers that question. I used Gemini to write all the code. I copy-pasted. This took about a month.
+
+No team. No funding. No VC pitch deck. Just a real problem and a signal.
+
+— Sakari
