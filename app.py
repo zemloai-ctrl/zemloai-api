@@ -27,10 +27,10 @@ limiter      = Limiter(key_func=get_remote_address, app=app, default_limits=["10
 
 # --- CURRENCY LOGIC ---
 
-DEFAULT_EUR_TO_USD = 1.09  # Fallback if Frankfurter API is unavailable
+DEFAULT_EUR_TO_USD = 1.09
 
 EUR_ZONE = [
-    "finland", "helsinki", "sweden", "stockholm", "norway", "oslo",
+    "finland", "helsinki", "kokkola", "tampere", "oulu", "sweden", "stockholm", "norway", "oslo",
     "denmark", "copenhagen", "germany", "berlin", "hamburg", "frankfurt",
     "france", "paris", "spain", "madrid", "barcelona", "italy", "rome", "milan",
     "netherlands", "amsterdam", "rotterdam", "belgium", "brussels",
@@ -62,7 +62,6 @@ USD_ZONE = [
 ]
 
 def get_live_fx_rate():
-    """Fetches live EUR/USD rate from Frankfurter API with 24h Redis cache."""
     cache_key = "fx_rate:EUR_USD"
     try:
         cached_rate = redis_client.get(cache_key)
@@ -75,7 +74,7 @@ def get_live_fx_rate():
         rate = resp.json()['rates']['USD']
         try:
             redis_client.set(cache_key, rate, ex=86400)
-            logger.info(f"FX Update: 1 EUR = {rate} USD (Frankfurter)")
+            logger.info(f"FX Update: 1 EUR = {rate} USD")
         except Exception:
             pass
         return float(rate)
@@ -84,7 +83,6 @@ def get_live_fx_rate():
         return DEFAULT_EUR_TO_USD
 
 def determine_currency(origin_clean, dest_clean):
-    """Auto-detects currency based on route. EUR for intra-Europe, USD for global."""
     is_eur_origin = any(z in origin_clean for z in EUR_ZONE)
     is_eur_dest   = any(z in dest_clean   for z in EUR_ZONE)
     is_usd_origin = any(z in origin_clean for z in USD_ZONE)
@@ -94,7 +92,6 @@ def determine_currency(origin_clean, dest_clean):
     return "USD"
 
 def convert_price(p_min, p_max, currency, fx_rate):
-    """Converts EUR-based AI price to target currency using pre-fetched rate."""
     if currency == "USD" and fx_rate:
         return round(p_min * fx_rate), round(p_max * fx_rate)
     return p_min, p_max
@@ -102,7 +99,6 @@ def convert_price(p_min, p_max, currency, fx_rate):
 # --- BUSINESS LOGIC ---
 
 def identify_agent(ua):
-    """Identifies whether the caller is a human or an AI agent."""
     ua = ua.lower()
     agents = {
         'gptbot': 'OPENAI', 'chatgpt': 'OPENAI',
@@ -117,7 +113,6 @@ def identify_agent(ua):
     return "HUMAN"
 
 def compute_trust(ai_data):
-    """Trust score reflects data confidence, not route difficulty."""
     risk_map = {"Low": 95, "Med": 75, "High": 45}
     score = risk_map.get(ai_data.get("risk", "Med"), 50)
     if ai_data.get("dist_km", 0) == 0:
@@ -125,12 +120,10 @@ def compute_trust(ai_data):
     return max(min(score, 100), 10)
 
 def get_co2_impact(mode, dist_km, weight_kg):
-    """Calculates CO2 footprint using mode-specific emission factors."""
     factors = {"Air": 0.5, "Road": 0.1, "Rail": 0.03, "Sea": 0.015}
     return round(float(dist_km or 0) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 2)
 
 def get_weight_bucket(weight_kg):
-    """Categorizes shipment weight for analytics."""
     if weight_kg <= 50:  return "Light"
     if weight_kg <= 500: return "Medium"
     return "Heavy"
@@ -138,7 +131,6 @@ def get_weight_bucket(weight_kg):
 # --- LIVE DATA FETCHING (1h cache) ---
 
 def fetch_live_signals():
-    """Fetches news and disaster alerts with 1h Redis cache to save API quota."""
     cache_key = "global_logistics_context"
     try:
         cached = redis_client.get(cache_key)
@@ -198,7 +190,7 @@ def get_signal():
     if not origin or not dest:
         return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
 
-    # 1. SANCTIONS SHIELD — Hybrid: fast country check + Gemini city-level fallback
+    # 1. SANCTIONS SHIELD — country-level only, fast check
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
     SANCTIONED_COUNTRIES = [
         "russia", "venäjä", "belarus", "valko-venäjä",
@@ -228,9 +220,9 @@ def get_signal():
     # 5. AI ENGINE (Gemini 2.5 Flash)
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
-        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"sanctioned\":bool, \"note\":\"str\"}}. "
-        f"IMPORTANT: If route {origin} to {dest} involves sanctioned territories (Russia, Belarus, Iran, Syria, North Korea) set 'sanctioned': true. "
-        f"Cargo: {cargo}, {weight}kg. Context: {json.dumps(news)}, Alerts: {alerts}."
+        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
+        f"Route: {origin} to {dest}. Cargo: {cargo}, {weight}kg. "
+        f"Context: {json.dumps(news)}, Alerts: {alerts}."
     )
 
     try:
@@ -243,20 +235,14 @@ def get_signal():
                 "thinkingConfig": {"thinkingBudget": 0}
             }
         }, timeout=12)
-        raw     = resp.json()['candidates'][0]['content']['parts'][0]['text']
-        logger.info(f"Gemini raw: {raw[:200]}")
+        raw       = resp.json()['candidates'][0]['content']['parts'][0]['text']
         raw_clean = re.sub(r"```(?:json)?\s*", "", raw).strip()
-        ai      = json.loads(re.search(r"\{.*\}", raw_clean, re.DOTALL).group())
+        ai        = json.loads(re.search(r"\{.*\}", raw_clean, re.DOTALL).group())
         if not all(k in ai for k in ["p_min", "p_max", "mode", "risk", "actions"]):
             raise ValueError("Missing required AI fields")
     except Exception as e:
         logger.error(f"AI Failure: {e}")
         return jsonify({"error": "Signal loss. Try again."}), 503
-
-    # Gemini-tason sanctions-tarkistus (kaupungit joita ei tunneta maalistasta)
-    if ai.get("sanctioned"):
-        logger.warning(f"AI sanctions block: {origin} -> {dest}")
-        return jsonify({"hard_stop": True, "reason": "Route involves sanctioned regions identified by AI."}), 451
 
     # 6. COMPLIANCE & CALCULATIONS
     is_haz = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
@@ -322,7 +308,6 @@ def get_signal():
 
 @app.route("/health")
 def health():
-    """Lightweight health check. Use ?deep=true for full infrastructure status."""
     if request.args.get("deep") == "true":
         status = {"status": "Operational", "version": "1.0", "services": {}}
         try:
