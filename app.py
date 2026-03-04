@@ -292,24 +292,27 @@ def get_signal():
 
 @app.route("/health")
 def health():
-    """Tarkistaa infrastruktuurin tilan (Redis + Supabase)."""
-    status = {
-        "status":   "Operational",
-        "version":  "1.9.6",
-        "services": {}
-    }
-    try:
-        redis_client.get("health-check")
-        status["services"]["redis"] = "Connected"
-    except Exception:
-        status["services"]["redis"] = "Disconnected"
-    try:
-        supabase.table("signals").select("id").limit(1).execute()
-        status["services"]["supabase"] = "Connected"
-    except Exception:
-        status["services"]["supabase"] = "Disconnected"
+    """
+    Kevyt health check Renderin automaattisille kutsuille (5s välein).
+    Ei tee tietokantakyselyitä — palauttaa vain version ja statuksen.
+    Syvempi infra-tarkistus: GET /health?deep=true
+    """
+    if request.args.get("deep") == "true":
+        status = {"status": "Operational", "version": "1.9.6", "services": {}}
+        try:
+            redis_client.get("health-check")
+            status["services"]["redis"] = "Connected"
+        except Exception:
+            status["services"]["redis"] = "Disconnected"
+        try:
+            supabase.table("signals").select("id").limit(1).execute()
+            status["services"]["supabase"] = "Connected"
+        except Exception:
+            status["services"]["supabase"] = "Disconnected"
+        return jsonify(status)
 
-    return jsonify(status)
+    # Normaali kevyt health check — ei DB-kutsuja
+    return jsonify({"status": "Operational", "version": "1.9.6"})
 
 @app.route("/")
 def index():
