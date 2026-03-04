@@ -184,7 +184,10 @@ def get_signal():
         f"\"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
         f"Use EUR for intra-European routes, USD for all global routes. "
         f"Route: {origin} to {dest}. Cargo: {cargo}, {weight}kg. "
-        f"Context: {json.dumps(news)}, Alerts: {alerts}."
+        f"Context News: {json.dumps(news)}. Alerts: {alerts}. "
+        f"CRITICAL: Evaluate risk ONLY based on facts relevant to THIS SPECIFIC ROUTE. "
+        f"Middle East conflict does NOT affect North Atlantic or trans-Pacific air routes. "
+        f"If news are irrelevant to this route, ignore them and set risk based on route reality."
     )
 
     try:
