@@ -135,10 +135,19 @@ def get_weight_bucket(weight_kg):
     if weight_kg <= 500: return "Medium"
     return "Heavy"
 
-# --- LIVE DATA FETCHING ---
+# --- LIVE DATA FETCHING (1h cache) ---
 
 def fetch_live_signals():
-    """Fetches news and global disaster alerts in parallel."""
+    """Fetches news and disaster alerts with 1h Redis cache to save API quota."""
+    cache_key = "global_logistics_context"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            data = json.loads(cached)
+            return data["news"], data["alerts"]
+    except Exception:
+        pass
+
     def get_news():
         try:
             q = "port+strike+OR+logistics+disruption+OR+border+delay+OR+shipping+war+risk"
@@ -156,9 +165,16 @@ def fetch_live_signals():
             return None
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        f_news     = executor.submit(get_news)
-        f_disaster = executor.submit(get_disasters)
-        return f_news.result(), f_disaster.result()
+        news   = executor.submit(get_news).result()
+        alerts = executor.submit(get_disasters).result()
+
+    try:
+        redis_client.set(cache_key, json.dumps({"news": news, "alerts": alerts}), ex=3600)
+        logger.info("Live signals cached for 1h")
+    except Exception:
+        pass
+
+    return news, alerts
 
 # --- SIGNAL ENDPOINT ---
 
@@ -184,7 +200,6 @@ def get_signal():
 
     # 1. SANCTIONS SHIELD
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
-    # FIX: lisätty kaupunkinimet pelkkien maiden lisäksi
     sanctions = [
         "russia", "venäjä", "moscow", "st. petersburg", "novosibirsk",
         "belarus", "minsk",
@@ -210,7 +225,7 @@ def get_signal():
     except Exception:
         pass
 
-    # 4. LIVE INTELLIGENCE
+    # 4. LIVE INTELLIGENCE (1h cached)
     news, alerts = fetch_live_signals()
 
     # 5. AI ENGINE (Gemini 2.5 Flash)
@@ -223,7 +238,13 @@ def get_signal():
 
     try:
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
-        resp    = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=12)
+        resp    = requests.post(api_url, json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 200,
+                "temperature": 0.1
+            }
+        }, timeout=12)
         raw     = resp.json()['candidates'][0]['content']['parts'][0]['text']
         ai      = json.loads(re.search(r'\{.*\}', raw, re.DOTALL).group())
         if not all(k in ai for k in ["p_min", "p_max", "mode", "risk", "actions"]):
@@ -271,8 +292,6 @@ def get_signal():
     }
 
     # 8. STORAGE
-    # FIX: "id" poistettu — Supabase generoi bigint id:n automaattisesti
-    # FIX: "request_id" lisätty UUID:n tallentamiseen
     try:
         redis_client.set(cache_key, json.dumps(response), ex=300)
         supabase.table("signals").insert({
