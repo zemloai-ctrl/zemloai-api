@@ -295,7 +295,18 @@ def health():
 
 @app.route("/")
 def index():
-    return "Zemlo AI v1.0 — The Global Logistics Signal. Use /signal for queries."
+    return jsonify({
+        "name":        "Zemlo AI",
+        "version":     "1.0",
+        "description": "Carrier-neutral logistics signal layer for AI agents and developers.",
+        "status":      "Operational",
+        "usage":       "GET /signal?from=Helsinki&to=Manila&cargo=Electronics&weight=20",
+        "docs":        "https://github.com/zemloai-ctrl/zemloai-api",
+        "auth":        "None required",
+        "contact":     "info@zemloai.com"
+    })
+
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
