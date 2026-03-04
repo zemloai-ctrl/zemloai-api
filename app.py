@@ -11,7 +11,7 @@ from supabase import create_client, Client
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.9.6")
+logger = logging.getLogger("Zemlo-v1.9.7")
 
 # --- KONFIGURAATIO ---
 REDIS_URL    = os.environ.get("UPSTASH_REDIS_REST_URL")
@@ -25,7 +25,9 @@ redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
 limiter      = Limiter(key_func=get_remote_address, app=app, default_limits=["100 per minute"], storage_uri="memory://")
 
-# --- VALUUTTA-LOGIIKKA (v1.9.6) ---
+# --- VALUUTTA-LOGIIKKA (v1.9.7: Live FX API) ---
+
+DEFAULT_EUR_TO_USD = 1.09 # Varasuunnitelma
 
 # EUR-vyöhyke: EU-maat + lähialueet joissa EUR on standardi
 EUR_ZONE = [
@@ -76,42 +78,59 @@ USD_ZONE = [
     "morocco", "casablanca"
 ]
 
-# Kiinteä EUR→USD konversiokerroin (v1.9.6: staattinen, v2.0: live FX API)
-EUR_TO_USD = 1.09
+def get_live_fx_rate():
+    """Hakee tuoreen EUR/USD kurssin Frankfurter.dev APIsta välimuistilla."""
+    cache_key = "fx_rate:EUR_USD"
+    
+    # 1. Tarkistetaan Redis (24h välimuisti)
+    try:
+        cached_rate = redis_client.get(cache_key)
+        if cached_rate:
+            return float(cached_rate)
+    except Exception:
+        pass
+
+    # 2. Haetaan livenä jos ei välimuistissa
+    try:
+        url = "https://api.frankfurter.dev/v1/latest?base=EUR&symbols=USD"
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        rate = data['rates']['USD']
+        
+        # 3. Tallennetaan Redikseen (86400s = 24h)
+        try:
+            redis_client.set(cache_key, rate, ex=86400)
+            logger.info(f"FX Update: 1 EUR = {rate} USD (Source: Frankfurter)")
+        except Exception:
+            pass
+            
+        return float(rate)
+    except Exception as e:
+        logger.warning(f"FX API Failure (Frankfurter): {e}. Fallback: {DEFAULT_EUR_TO_USD}")
+        return DEFAULT_EUR_TO_USD
 
 def determine_currency(origin_clean, dest_clean):
-    """
-    Älykäs valuutan valinta reitin perusteella.
-    - Molemmat EUR-vyöhykkeessä → EUR
-    - Toinen tai molemmat USD-vyöhykkeessä → USD
-    - Tuntematon reitti → USD (kansainvälinen standardi)
-    """
+    """Älykäs valuutan valinta reitin perusteella."""
     is_eur_origin = any(z in origin_clean for z in EUR_ZONE)
     is_eur_dest   = any(z in dest_clean   for z in EUR_ZONE)
     is_usd_origin = any(z in origin_clean for z in USD_ZONE)
     is_usd_dest   = any(z in dest_clean   for z in USD_ZONE)
 
-    # Intra-EUR reitti
     if is_eur_origin and is_eur_dest and not is_usd_origin and not is_usd_dest:
         return "EUR"
-
-    # Yksikin pää on globaali → USD
-    if is_usd_origin or is_usd_dest:
-        return "USD"
-
-    # Molemmat tuntemattomat → USD (kansainvälinen default)
     return "USD"
 
 def convert_price(p_min, p_max, currency):
-    """Muuntaa EUR-pohjaisen AI-hinnan oikeaan valuuttaan."""
+    """Konvertoi hinnan dynaamisesti käyttäen live-kurssia (v1.9.7)."""
     if currency == "USD":
-        return round(p_min * EUR_TO_USD), round(p_max * EUR_TO_USD)
+        fx_rate = get_live_fx_rate()
+        return round(p_min * fx_rate), round(p_max * fx_rate)
     return p_min, p_max
 
 # --- BUSINESS LOGIC HELPERS ---
 
 def identify_agent(ua):
-    """Tunnistaa onko kysyjä ihminen vai AI-botti (ZBI-logiikka)."""
+    """Tunnistaa onko kysyjä ihminen vai AI-botti."""
     ua = ua.lower()
     agents = {
         'gptbot': 'OPENAI', 'chatgpt': 'OPENAI',
@@ -126,15 +145,13 @@ def identify_agent(ua):
     return "HUMAN"
 
 def compute_trust(ai_data):
-    """Trust score heijastaa datan varmuutta, ei rahdin helppoutta."""
+    """Trust score heijastaa datan varmuutta."""
     risk_map = {"Low": 95, "Med": 75, "High": 45}
     score = risk_map.get(ai_data.get("risk", "Med"), 50)
-    if ai_data.get("dist_km", 0) == 0:
-        score -= 10
     return max(min(score, 100), 10)
 
 def get_co2_impact(mode, dist_km, weight_kg):
-    """Laskee hiilijalanjäljen (Zemlo Care+ valmius)."""
+    """Laskee hiilijalanjäljen."""
     factors = {"Air": 0.5, "Road": 0.1, "Rail": 0.03, "Sea": 0.015}
     return round(float(dist_km or 0) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 2)
 
@@ -171,32 +188,30 @@ def get_signal():
     start_time = time.time()
     data = (request.get_json(silent=True) or {}) if request.method == "POST" else request.args
 
-    # Input sanitointi
     origin = str(data.get("from", ""))[:80]
     dest   = str(data.get("to",   ""))[:80]
     cargo  = str(data.get("cargo", "General Goods"))[:80]
 
     try:
         weight = float(data.get("weight", 500))
-        if weight <= 0:
-            raise ValueError
+        if weight <= 0: raise ValueError
     except (ValueError, TypeError):
         return jsonify({"error": "Weight must be a positive number."}), 400
 
     if not origin or not dest:
         return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
 
-    # 1. BLACKLIST & SAFETY (Sanctions 2026)
+    # 1. BLACKLIST & SAFETY
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
     sanctions = ["russia", "venäjä", "belarus", "iran", "syria", "north korea"]
     if any(s in o_c for s in sanctions) or any(s in d_c for s in sanctions):
         return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route."}), 451
 
-    # 2. VALUUTAN MÄÄRITYS (v1.9.6: älykäs reittipohjainen logiikka)
+    # 2. VALUUTAN MÄÄRITYS
     currency = determine_currency(o_c, d_c)
 
-    # 3. CACHE LAYER (5 min TTL — cache_key sisältää valuutan)
-    cache_key = f"z1.9.6:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}{currency}'.encode()).hexdigest()}"
+    # 3. CACHE LAYER
+    cache_key = f"z1.9.7:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}{currency}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached:
@@ -206,15 +221,14 @@ def get_signal():
     except Exception:
         pass
 
-    # 4. LIVE INTELLIGENCE (Rinnakkain)
+    # 4. LIVE INTELLIGENCE
     news, alerts = fetch_live_signals()
 
-    # 5. AI ENGINE (Gemini 2.5 Flash)
+    # 5. AI ENGINE
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
         f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
-        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. "
-        f"Context: {json.dumps(news)}, {alerts}."
+        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. Context: {news}."
     )
 
     try:
@@ -222,20 +236,16 @@ def get_signal():
         resp    = requests.post(api_url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=12)
         raw     = resp.json()['candidates'][0]['content']['parts'][0]['text']
         ai      = json.loads(re.search(r'\{.*\}', raw, re.DOTALL).group())
-        if not all(k in ai for k in ["p_min", "p_max", "mode", "risk", "actions"]):
-            raise ValueError("Missing required AI fields")
     except Exception as e:
         logger.error(f"AI Failure: {e}")
         return jsonify({"error": "Signal loss. Try again."}), 503
 
-    # 6. BUSINESS LOGIC & COMPLIANCE
+    # 6. BUSINESS LOGIC
     is_haz = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
     co2    = get_co2_impact(ai['mode'], ai.get("dist_km", 0), weight)
+    final_min, final_max = convert_price(ai['p_min'], ai['p_max'], currency)
     req_id = str(uuid.uuid4())
     ua     = request.headers.get('User-Agent', '')
-
-    # v1.9.6: Konvertoidaan hinta oikeaan valuuttaan
-    final_min, final_max = convert_price(ai['p_min'], ai['p_max'], currency)
 
     # 7. RESPONSE OBJECT
     response = {
@@ -249,17 +259,11 @@ def get_signal():
             "customs_required": ai.get("customs", True),
             "note":             ai.get("note", "")
         },
-        "live_context": {
-            "news":           news,
-            "disaster_alert": alerts
-        },
+        "live_context": { "news": news, "disaster_alert": alerts },
         "do_these_3_things": (ai.get("actions", []) + ["Verify docs", "Check route"])[:3],
-        "environmental_impact": {
-            "co2_kg":           co2,
-            "offset_available": True
-        },
+        "environmental_impact": { "co2_kg": co2, "offset_available": True },
         "metadata": {
-            "engine":      "Zemlo AI v1.9.6",
+            "engine":      "Zemlo AI v1.9.7",
             "request_id":  req_id[:8],
             "cache_hit":   False,
             "latency_sec": round(time.time() - start_time, 2),
@@ -267,56 +271,27 @@ def get_signal():
         }
     }
 
-    # 8. STORAGE (Redis 5 min + Supabase)
+    # 8. STORAGE
     try:
         redis_client.set(cache_key, json.dumps(response), ex=300)
         supabase.table("signals").insert({
-            "id":             req_id,
-            "origin":         origin,
-            "destination":    dest,
-            "cargo":          cargo,
-            "mode":           ai['mode'],
-            "type":           identify_agent(ua),
-            "bot_name":       ua[:100],
-            "co2_kg":         co2,
-            "price_estimate": response["signal"]["price_estimate"],
-            "trust_score":    response["signal"]["trust_score"],
-            "currency":       currency
+            "id": req_id, "origin": origin, "destination": dest, "cargo": cargo,
+            "mode": ai['mode'], "type": identify_agent(ua), "bot_name": ua[:100],
+            "co2_kg": co2, "price_estimate": response["signal"]["price_estimate"],
+            "trust_score": response["signal"]["trust_score"], "currency": currency
         }).execute()
     except Exception as e:
         logger.warning(f"Storage error: {e}")
 
     return jsonify(response)
 
-# --- HEALTH CHECK ---
-
 @app.route("/health")
 def health():
-    """
-    Kevyt health check Renderin automaattisille kutsuille (5s välein).
-    Ei tee tietokantakyselyitä — palauttaa vain version ja statuksen.
-    Syvempi infra-tarkistus: GET /health?deep=true
-    """
-    if request.args.get("deep") == "true":
-        status = {"status": "Operational", "version": "1.9.6", "services": {}}
-        try:
-            redis_client.get("health-check")
-            status["services"]["redis"] = "Connected"
-        except Exception:
-            status["services"]["redis"] = "Disconnected"
-        try:
-            supabase.table("signals").select("id").limit(1).execute()
-            status["services"]["supabase"] = "Connected"
-        except Exception:
-            status["services"]["supabase"] = "Disconnected"
-        return jsonify(status)
-
-    # Normaali kevyt health check — ei DB-kutsuja
-    return jsonify({"status": "Operational", "version": "1.9.6"})
+    return jsonify({"status": "Operational", "version": "1.9.7"})
 
 @app.route("/")
 def index():
-    return "Zemlo AI API v1.9.6 - Logistics Made Easy. Use /signal for queries."
+    return "Zemlo AI API v1.9.7 - Logistics Made Easy. Use /signal for queries."
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
