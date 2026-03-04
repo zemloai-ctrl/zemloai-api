@@ -25,48 +25,17 @@ redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
 limiter      = Limiter(key_func=get_remote_address, app=app, default_limits=["100 per minute"], storage_uri="memory://")
 
-# --- CURRENCY LOGIC ---
-
 DEFAULT_EUR_TO_USD = 1.09
 
-EUR_ZONE = [
-    "finland", "helsinki", "kokkola", "tampere", "oulu", "sweden", "stockholm", "norway", "oslo",
-    "denmark", "copenhagen", "germany", "berlin", "hamburg", "frankfurt",
-    "france", "paris", "spain", "madrid", "barcelona", "italy", "rome", "milan",
-    "netherlands", "amsterdam", "rotterdam", "belgium", "brussels",
-    "austria", "vienna", "poland", "warsaw", "czech", "prague",
-    "hungary", "budapest", "romania", "bucharest", "bulgaria", "sofia",
-    "croatia", "zagreb", "slovakia", "bratislava", "slovenia", "ljubljana",
-    "estonia", "tallinn", "latvia", "riga", "lithuania", "vilnius",
-    "portugal", "lisbon", "greece", "athens", "ireland", "dublin",
-    "luxembourg", "malta", "cyprus", "nicosia",
-    "switzerland", "zurich", "bern", "iceland",
-    "serbia", "belgrade", "balkans", "ukraine", "kyiv"
-]
-
-USD_ZONE = [
-    "usa", "united states", "new york", "los angeles", "chicago", "houston",
-    "canada", "toronto", "vancouver", "montreal",
-    "china", "beijing", "shanghai", "shenzhen", "guangzhou",
-    "japan", "tokyo", "osaka", "south korea", "seoul",
-    "singapore", "hong kong", "australia", "sydney", "melbourne",
-    "india", "mumbai", "delhi", "bangalore", "brazil", "sao paulo", "rio",
-    "mexico", "mexico city", "uae", "dubai", "abu dhabi",
-    "saudi", "riyadh", "jeddah", "turkey", "istanbul", "ankara",
-    "egypt", "cairo", "south africa", "johannesburg", "cape town",
-    "indonesia", "jakarta", "malaysia", "kuala lumpur", "thailand", "bangkok",
-    "vietnam", "ho chi minh", "philippines", "manila", "taiwan", "taipei",
-    "new zealand", "auckland", "argentina", "buenos aires", "chile", "santiago",
-    "colombia", "bogota", "peru", "lima", "nigeria", "lagos", "kenya", "nairobi",
-    "morocco", "casablanca"
-]
+# --- FX RATE ---
 
 def get_live_fx_rate():
+    """Fetches live EUR/USD rate with 24h Redis cache."""
     cache_key = "fx_rate:EUR_USD"
     try:
-        cached_rate = redis_client.get(cache_key)
-        if cached_rate:
-            return float(cached_rate)
+        cached = redis_client.get(cache_key)
+        if cached:
+            return float(cached)
     except Exception:
         pass
     try:
@@ -79,26 +48,13 @@ def get_live_fx_rate():
             pass
         return float(rate)
     except Exception as e:
-        logger.warning(f"FX API unavailable: {e}. Using fallback: {DEFAULT_EUR_TO_USD}")
+        logger.warning(f"FX unavailable: {e}. Fallback: {DEFAULT_EUR_TO_USD}")
         return DEFAULT_EUR_TO_USD
-
-def determine_currency(origin_clean, dest_clean):
-    is_eur_origin = any(z in origin_clean for z in EUR_ZONE)
-    is_eur_dest   = any(z in dest_clean   for z in EUR_ZONE)
-    is_usd_origin = any(z in origin_clean for z in USD_ZONE)
-    is_usd_dest   = any(z in dest_clean   for z in USD_ZONE)
-    if is_eur_origin and is_eur_dest and not is_usd_origin and not is_usd_dest:
-        return "EUR"
-    return "USD"
-
-def convert_price(p_min, p_max, currency, fx_rate):
-    if currency == "USD" and fx_rate:
-        return round(p_min * fx_rate), round(p_max * fx_rate)
-    return p_min, p_max
 
 # --- BUSINESS LOGIC ---
 
 def identify_agent(ua):
+    """Identifies whether the caller is a human or an AI agent."""
     ua = ua.lower()
     agents = {
         'gptbot': 'OPENAI', 'chatgpt': 'OPENAI',
@@ -113,6 +69,7 @@ def identify_agent(ua):
     return "HUMAN"
 
 def compute_trust(ai_data):
+    """Trust score reflects data confidence, not route difficulty."""
     risk_map = {"Low": 95, "Med": 75, "High": 45}
     score = risk_map.get(ai_data.get("risk", "Med"), 50)
     if ai_data.get("dist_km", 0) == 0:
@@ -120,10 +77,12 @@ def compute_trust(ai_data):
     return max(min(score, 100), 10)
 
 def get_co2_impact(mode, dist_km, weight_kg):
+    """Calculates CO2 footprint using mode-specific emission factors."""
     factors = {"Air": 0.5, "Road": 0.1, "Rail": 0.03, "Sea": 0.015}
     return round(float(dist_km or 0) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 2)
 
 def get_weight_bucket(weight_kg):
+    """Categorizes shipment weight for analytics."""
     if weight_kg <= 50:  return "Light"
     if weight_kg <= 500: return "Medium"
     return "Heavy"
@@ -131,6 +90,7 @@ def get_weight_bucket(weight_kg):
 # --- LIVE DATA FETCHING (1h cache) ---
 
 def fetch_live_signals():
+    """Fetches news and disaster alerts with 1h Redis cache."""
     cache_key = "global_logistics_context"
     try:
         cached = redis_client.get(cache_key)
@@ -190,7 +150,7 @@ def get_signal():
     if not origin or not dest:
         return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
 
-    # 1. SANCTIONS SHIELD — country-level only, fast check
+    # 1. SANCTIONS SHIELD
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
     SANCTIONED_COUNTRIES = [
         "russia", "venäjä", "belarus", "valko-venäjä",
@@ -199,12 +159,8 @@ def get_signal():
     if any(s in o_c for s in SANCTIONED_COUNTRIES) or any(s in d_c for s in SANCTIONED_COUNTRIES):
         return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route."}), 451
 
-    # 2. CURRENCY & FX RATE
-    currency = determine_currency(o_c, d_c)
-    fx_rate  = get_live_fx_rate() if currency == "USD" else None
-
-    # 3. CACHE (5 min TTL)
-    cache_key = f"z1.0:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}{currency}'.encode()).hexdigest()}"
+    # 2. CACHE (5 min TTL) — currency determined by AI, so cache key without currency
+    cache_key = f"z1.0:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached:
@@ -214,13 +170,19 @@ def get_signal():
     except Exception:
         pass
 
-    # 4. LIVE INTELLIGENCE (1h cached)
+    # 3. LIVE INTELLIGENCE (1h cached)
     news, alerts = fetch_live_signals()
 
+    # 4. FX RATE
+    fx_rate = get_live_fx_rate()
+
     # 5. AI ENGINE (Gemini 2.5 Flash)
+    # Gemini decides currency — EUR for intra-European, USD for global
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
-        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
+        f"\"currency\":\"EUR|USD\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"], "
+        f"\"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
+        f"Use EUR for intra-European routes, USD for all global routes. "
         f"Route: {origin} to {dest}. Cargo: {cargo}, {weight}kg. "
         f"Context: {json.dumps(news)}, Alerts: {alerts}."
     )
@@ -245,17 +207,24 @@ def get_signal():
         return jsonify({"error": "Signal loss. Try again."}), 503
 
     # 6. COMPLIANCE & CALCULATIONS
+    currency = ai.get("currency", "USD")
+    p_min = ai['p_min']
+    p_max = ai['p_max']
+    # AI returns EUR-based prices — convert to USD if needed
+    if currency == "USD":
+        p_min = round(p_min * fx_rate)
+        p_max = round(p_max * fx_rate)
+
     is_haz = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
     bucket = get_weight_bucket(weight)
     co2    = get_co2_impact(ai['mode'], ai.get("dist_km", 0), weight)
-    f_min, f_max = convert_price(ai['p_min'], ai['p_max'], currency, fx_rate)
     req_id = str(uuid.uuid4())
     ua     = request.headers.get('User-Agent', '')
 
     # 7. RESPONSE
     response = {
         "signal": {
-            "price_estimate":   f"{f_min} - {f_max} {currency}",
+            "price_estimate":   f"{p_min} - {p_max} {currency}",
             "currency":         currency,
             "transport_mode":   ai['mode'],
             "trust_score":      compute_trust(ai),
@@ -308,6 +277,7 @@ def get_signal():
 
 @app.route("/health")
 def health():
+    """Lightweight health check. Use ?deep=true for full infrastructure status."""
     if request.args.get("deep") == "true":
         status = {"status": "Operational", "version": "1.0", "services": {}}
         try:
