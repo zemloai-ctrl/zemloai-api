@@ -238,7 +238,7 @@ def get_signal():
         resp    = requests.post(api_url, json={
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "maxOutputTokens": 200,
+                "maxOutputTokens": 400,
                 "temperature": 0.1
             }
         }, timeout=12)
