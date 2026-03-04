@@ -198,16 +198,13 @@ def get_signal():
     if not origin or not dest:
         return jsonify({"error": "Missing 'from' or 'to' parameters."}), 400
 
-    # 1. SANCTIONS SHIELD
+    # 1. SANCTIONS SHIELD — Hybrid: fast country check + Gemini city-level fallback
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
-    sanctions = [
-        "russia", "venäjä", "moscow", "st. petersburg", "novosibirsk",
-        "belarus", "minsk",
-        "iran", "tehran",
-        "syria", "damascus",
-        "north korea", "pyongyang"
+    SANCTIONED_COUNTRIES = [
+        "russia", "venäjä", "belarus", "valko-venäjä",
+        "iran", "syria", "north korea", "dprk"
     ]
-    if any(s in o_c for s in sanctions) or any(s in d_c for s in sanctions):
+    if any(s in o_c for s in SANCTIONED_COUNTRIES) or any(s in d_c for s in SANCTIONED_COUNTRIES):
         return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route."}), 451
 
     # 2. CURRENCY & FX RATE
@@ -231,9 +228,9 @@ def get_signal():
     # 5. AI ENGINE (Gemini 2.5 Flash)
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
-        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
-        f"Route: {origin} to {dest}, Cargo: {cargo}, {weight}kg. "
-        f"Context: {json.dumps(news)}, Alerts: {alerts}."
+        f"\"risk\":\"Low|Med|High\", \"actions\":[\"str\"], \"dist_km\":int, \"customs\":bool, \"sanctioned\":bool, \"note\":\"str\"}}. "
+        f"IMPORTANT: If route {origin} to {dest} involves sanctioned territories (Russia, Belarus, Iran, Syria, North Korea) set 'sanctioned': true. "
+        f"Cargo: {cargo}, {weight}kg. Context: {json.dumps(news)}, Alerts: {alerts}."
     )
 
     try:
@@ -252,6 +249,11 @@ def get_signal():
     except Exception as e:
         logger.error(f"AI Failure: {e}")
         return jsonify({"error": "Signal loss. Try again."}), 503
+
+    # Gemini-tason sanctions-tarkistus (kaupungit joita ei tunneta maalistasta)
+    if ai.get("sanctioned"):
+        logger.warning(f"AI sanctions block: {origin} -> {dest}")
+        return jsonify({"hard_stop": True, "reason": "Route involves sanctioned regions identified by AI."}), 451
 
     # 6. COMPLIANCE & CALCULATIONS
     is_haz = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
