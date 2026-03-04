@@ -76,6 +76,16 @@ The primary endpoint for retrieving freight estimates and compliance data.
 | `cargo` | optional | Cargo description (e.g. `"industrial batteries"`) |
 | `weight` | optional | Weight in kg (default: `500`) |
 
+### `POST /signal` — Same as GET, JSON body
+
+Preferred for AI agents and programmatic integrations.
+
+```bash
+curl -X POST https://zemloai-api.onrender.com/signal \
+  -H "Content-Type: application/json" \
+  -d '{"from": "Shanghai", "to": "Rotterdam", "cargo": "Solar Panels", "weight": 5000}'
+```
+
 ### `GET /health` — Service Status
 
 Returns `{"status": "Operational", "version": "1.0"}`.
@@ -115,7 +125,7 @@ Use `GET /health?deep=true` for full infrastructure status including Redis and S
     "engine": "Zemlo AI v1.0",
     "request_id": "a1b2c3d4",
     "cache_hit": false,
-    "latency_sec": 1.12,
+    "latency_sec": 1.59,
     "timestamp": "2026-03-04T08:30:00.000Z"
   }
 }
@@ -125,13 +135,15 @@ Use `GET /health?deep=true` for full infrastructure status including Redis and S
 
 ## 🛡️ Core Logic & Safety
 
-**Live FX Intelligence** — v1.0 automatically converts prices using real-time EUR/USD rates via Frankfurter API with 24h caching. Intra-European routes return EUR, all global routes return USD.
+**Live FX Intelligence** — Automatically converts prices using real-time EUR/USD rates via Frankfurter API with 24h caching. Intra-European routes return EUR, all global routes return USD.
 
-**Sanctions Shield** — Enforces HTTP 451 hard-stops on sanctioned territories (Russia, Belarus, Iran, Syria, North Korea). No workarounds.
+**Sanctions Shield (Hybrid)** — Two-layer enforcement. Fast country-level block for known sanctioned states. AI-level city recognition for edge cases — Vladivostok, Minsk, Novosibirsk. All blocked with HTTP 451. No workarounds.
 
-**Hazardous Detection** — Pattern-matching for batteries, chemicals, and UN-numbers triggers safety flags and compliance checklists.
+**Hazardous Detection** — Pattern-matching for batteries, chemicals, and UN-numbers triggers safety flags and compliance checklists automatically.
 
 **Trust Score** — A dynamic confidence rating (10–100) based on route data quality and real-world disruptions. Reflects data certainty, not route difficulty.
+
+**Live News Cache** — NewsAPI and GDACS disaster alerts are fetched once per hour and cached in Redis. Every signal gets current intelligence without burning API quota.
 
 ---
 
@@ -140,7 +152,7 @@ Use `GET /health?deep=true` for full infrastructure status including Redis and S
 Zemlo AI is optimized for Perplexity, GPT-4o, Gemini, and Claude.
 
 - **JSON-Only Response** — No fluff, just structure. Every field is predictable and typed.
-- **Context-Aware** — Integrates NewsAPI and GDACS disaster alerts directly into AI prompt logic.
+- **Context-Aware** — Integrates NewsAPI and GDACS disaster alerts directly into every signal.
 - **Actionable** — Every signal includes `do_these_3_things`: a concrete compliance plan for the agent to present to the user.
 - **Agent Detection** — Zemlo AI identifies calling agents (OpenAI, Anthropic, Google, Perplexity, Microsoft) for analytics.
 
@@ -184,12 +196,13 @@ Zemlo AI is designed to be your logistics layer, not a competitor to your core f
 ## 🔧 Tech Stack
 
 - **AI Engine:** Google Gemini 2.5 Flash
-- **Cache:** Upstash Redis (5 min signal cache, 24h FX cache)
+- **Cache:** Upstash Redis (5 min signal cache, 1h news cache, 24h FX cache)
 - **Database:** Supabase
 - **Live Data:** NewsAPI, GDACS, Frankfurter FX
 - **Runtime:** Python / Flask on Render
 
 ---
 
-*🚢 Zemlo AI — Logistics Made Easy. It's time.*
+*🚢 Zemlo AI — The Global Logistics Signal.*
+*Built by one person in Finland. No team. No funding. Just signal.*
 *[zemloai.com](https://zemloai.com)*
