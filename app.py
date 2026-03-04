@@ -238,8 +238,9 @@ def get_signal():
         resp    = requests.post(api_url, json={
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "maxOutputTokens": 600,
-                "temperature": 0.1
+                "maxOutputTokens": 1000,
+                "temperature": 0.1,
+                "thinkingConfig": {"thinkingBudget": 0}
             }
         }, timeout=12)
         raw     = resp.json()['candidates'][0]['content']['parts'][0]['text']
