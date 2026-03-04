@@ -131,6 +131,12 @@ def get_co2_impact(mode, dist_km, weight_kg):
 
 # --- LIVE DATA FETCHING ---
 
+def get_weight_bucket(weight_kg):
+    """Categorizes shipment weight for analytics."""
+    if weight_kg <= 50:   return "Light"
+    if weight_kg <= 500:  return "Medium"
+    return "Heavy"
+
 def fetch_live_signals():
     """Fetches news and global disaster alerts in parallel."""
     def get_news():
@@ -220,7 +226,8 @@ def get_signal():
         return jsonify({"error": "Signal loss. Try again."}), 503
 
     # 6. COMPLIANCE & CALCULATIONS
-    is_haz = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
+    is_haz  = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
+    bucket  = get_weight_bucket(weight)
     co2    = get_co2_impact(ai['mode'], ai.get("dist_km", 0), weight)
     f_min, f_max = convert_price(ai['p_min'], ai['p_max'], currency, fx_rate)
     req_id = str(uuid.uuid4())
@@ -270,7 +277,8 @@ def get_signal():
             "co2_kg":         co2,
             "price_estimate": response["signal"]["price_estimate"],
             "trust_score":    response["signal"]["trust_score"],
-            "currency":       currency
+            "currency":       currency,
+            "weight_bucket":  bucket
         }).execute()
     except Exception as e:
         logger.warning(f"Storage error: {e}")
