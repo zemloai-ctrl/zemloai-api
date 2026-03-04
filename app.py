@@ -129,13 +129,13 @@ def get_co2_impact(mode, dist_km, weight_kg):
     factors = {"Air": 0.5, "Road": 0.1, "Rail": 0.03, "Sea": 0.015}
     return round(float(dist_km or 0) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 2)
 
-# --- LIVE DATA FETCHING ---
-
 def get_weight_bucket(weight_kg):
     """Categorizes shipment weight for analytics."""
-    if weight_kg <= 50:   return "Light"
-    if weight_kg <= 500:  return "Medium"
+    if weight_kg <= 50:  return "Light"
+    if weight_kg <= 500: return "Medium"
     return "Heavy"
+
+# --- LIVE DATA FETCHING ---
 
 def fetch_live_signals():
     """Fetches news and global disaster alerts in parallel."""
@@ -184,7 +184,14 @@ def get_signal():
 
     # 1. SANCTIONS SHIELD
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
-    sanctions = ["russia", "venäjä", "belarus", "iran", "syria", "north korea"]
+    # FIX: lisätty kaupunkinimet pelkkien maiden lisäksi
+    sanctions = [
+        "russia", "venäjä", "moscow", "st. petersburg", "novosibirsk",
+        "belarus", "minsk",
+        "iran", "tehran",
+        "syria", "damascus",
+        "north korea", "pyongyang"
+    ]
     if any(s in o_c for s in sanctions) or any(s in d_c for s in sanctions):
         return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route."}), 451
 
@@ -226,8 +233,8 @@ def get_signal():
         return jsonify({"error": "Signal loss. Try again."}), 503
 
     # 6. COMPLIANCE & CALCULATIONS
-    is_haz  = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
-    bucket  = get_weight_bucket(weight)
+    is_haz = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
+    bucket = get_weight_bucket(weight)
     co2    = get_co2_impact(ai['mode'], ai.get("dist_km", 0), weight)
     f_min, f_max = convert_price(ai['p_min'], ai['p_max'], currency, fx_rate)
     req_id = str(uuid.uuid4())
@@ -264,10 +271,12 @@ def get_signal():
     }
 
     # 8. STORAGE
+    # FIX: "id" poistettu — Supabase generoi bigint id:n automaattisesti
+    # FIX: "request_id" lisätty UUID:n tallentamiseen
     try:
         redis_client.set(cache_key, json.dumps(response), ex=300)
         supabase.table("signals").insert({
-            "id":             req_id,
+            "request_id":     req_id,
             "origin":         origin,
             "destination":    dest,
             "cargo":          cargo,
