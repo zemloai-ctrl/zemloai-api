@@ -1,11 +1,13 @@
-# 🚢 Zemlo AI API — Developer Documentation
-### v1.9.5 · Logistics Intelligence for AI Agents & Developers
+# 🚢 Zemlo AI API — Official v1.0 Documentation
+### The Global Logistics Signal Layer for AI Agents & Developers
 
-> **Zemlo AI** is an independent logistics signal API built for developers, AI agents, and bot integrations.  
-> It returns real-time freight price estimates, transport recommendations, sanctions checks, hazardous cargo flags, and live disruption alerts — all in a single JSON call.  
+> **Zemlo AI** is a carrier-neutral, independent logistics intelligence API.
+> It transforms the chaos of global shipping into a single, structured JSON signal.
+> Built for the 2026 AI-agent economy.
+> Signals are synthesized from real-time global trade data, live news feeds, and AI-driven logistics models — not static price tables.
 > 🌐 **[zemloai.com](https://zemloai.com)**
 
-> *"Zemlo AI does not promise perfect prices. It promises something more valuable: Better situational awareness than a guess."*
+> *"Zemlo AI does not promise perfect prices. It promises better situational awareness than a guess."*
 
 > ⚖️ **Zemlo AI is carrier-neutral and vendor-independent.** We are not DHL, UPS, FedEx, or any freight company's sales tool. Zemlo AI exists to give AI agents and developers unbiased logistics intelligence — so your application can serve its users, not a carrier's bottom line.
 
@@ -13,27 +15,25 @@
 
 ## 🏆 Why Zemlo AI?
 
-Most logistics APIs are built by carriers — which means they only show you routes they profit from, require weeks of approval, and disappear when the route gets complex.
+Traditional logistics APIs are built for carriers to sell space. Zemlo AI is built for users to find truth. We provide unbiased intelligence for high-friction routes where standard calculators fail.
 
-Zemlo AI is different.
-
-| | Traditional Carrier API | Zemlo AI |
+| Feature | Zemlo AI v1.0 | Carrier APIs |
 |---|---|---|
-| **Neutral data** | ❌ Carrier-biased | ✅ Fully independent |
-| **Access** | ❌ 14-day approval, credit card, sales call | ✅ Zero friction — just call the API |
-| **Hard routes** | ❌ Fails on non-standard routes | ✅ Handles high-friction routes |
-| **Context** | ❌ Price only | ✅ News, sanctions, disasters, compliance |
-| **Actionable** | ❌ Numbers only | ✅ 3-step compliance checklist per shipment |
+| **Independence** | ✅ 100% Carrier-neutral | ❌ Sales-driven |
+| **Real-Time Data** | ✅ Live FX & Disruption News | ❌ Static / Price only |
+| **Edge Cases** | ✅ Expert in high-friction routes | ❌ Errors on "hard" locations |
+| **AI-Native** | ✅ Built for Agents (JSON-first) | ❌ Built for Legacy Systems |
+| **Access** | ✅ Zero Friction — No API keys | ❌ Sales calls & 14-day approval |
 
 **Zero Friction** — No API keys, no signups, no sales calls. One URL. One signal. Done.
 
 **Independent** — Not owned by DHL, UPS, FedEx or any carrier. Zemlo AI has no financial interest in which route you choose.
 
-**Edge Case King** — Handles non-EU complexity and high-friction routes where standard calculators fail. Helsinki → Serbia? Istanbul → Riyadh? Zemlo AI signals where others return errors.
+**Edge Case King** — Handles complex and high-friction routes anywhere in the world where standard calculators fail. Helsinki → Serbia? Istanbul → Riyadh? Shanghai → Lagos? Zemlo AI signals where others return errors.
 
 **Human-in-the-Loop Advice** — Every response includes `do_these_3_things`: a compliance checklist that tells your AI agent exactly what to do next. Not just a number — a plan.
 
-**Context-Aware** — Real-time news, GDACS disaster alerts, and sanctions checks are baked into every signal. Your AI agent gets the full picture, not just a price.
+**Context-Aware** — Real-time news, GDACS disaster alerts, and live FX rates are baked into every signal. Your AI agent gets the full picture, not just a price.
 
 > *This is what makes Zemlo AI a consultant, not just a calculator.*
 
@@ -50,19 +50,14 @@ Zemlo AI is different.
 
 ## ⚡ Quick Start
 
+Get a logistics signal in under 2 seconds:
+
 ```bash
 curl "https://zemloai-api.onrender.com/signal?from=Helsinki&to=Tallinn&cargo=Electronics&weight=50"
 ```
 
-That's it. You'll get a full logistics signal back in under 2 seconds.
-
----
-
-## 🔗 Base URL
-
-```
-https://zemloai-api.onrender.com
-```
+That's it. No API key. No signup. No sales call.
+You just received a **Zemlo Signal** — real-time logistics intelligence in one JSON response.
 
 ---
 
@@ -70,249 +65,131 @@ https://zemloai-api.onrender.com
 
 ### `GET /signal` — Main Logistics Signal
 
-Returns a freight price estimate, transport mode, risk assessment, live disruptions, and compliance flags.
+The primary endpoint for retrieving freight estimates and compliance data.
 
-**Parameters**
+**Parameters:**
 
-| Parameter | Type   | Required | Description                          | Example              |
-|-----------|--------|----------|--------------------------------------|----------------------|
-| `from`    | string | ✅        | Origin city or country               | `Helsinki`           |
-| `to`      | string | ✅        | Destination city or country          | `New York`           |
-| `cargo`   | string | ❌        | Cargo description (default: General) | `industrial batteries` |
-| `weight`  | number | ❌        | Weight in kg (default: 500)          | `1200`               |
+| Parameter | Required | Description |
+|---|---|---|
+| `from` | ✅ | Origin city or country |
+| `to` | ✅ | Destination city or country |
+| `cargo` | optional | Cargo description (e.g. `"industrial batteries"`) |
+| `weight` | optional | Weight in kg (default: `500`) |
 
-**GET example**
-```
-GET /signal?from=Stockholm&to=Belgrade&cargo=industrial+batteries&weight=200
-```
+### `GET /health` — Service Status
 
-**POST example**
-```bash
-curl -X POST https://zemloai-api.onrender.com/signal \
-  -H "Content-Type: application/json" \
-  -d '{"from": "Stockholm", "to": "Belgrade", "cargo": "industrial batteries", "weight": 200}'
-```
+Returns `{"status": "Operational", "version": "1.0"}`.
+
+Use `GET /health?deep=true` for full infrastructure status including Redis and Supabase connectivity.
 
 ---
 
-### `GET /health` — Infrastructure Status
-
-Returns the operational status of Redis and Supabase connections.
-
-```bash
-curl "https://zemloai-api.onrender.com/health"
-```
-
-```json
-{
-  "status": "Operational",
-  "version": "1.9.5",
-  "services": {
-    "redis": "Connected",
-    "supabase": "Connected"
-  }
-}
-```
-
----
-
-## 📦 Example Response
+## 📦 Example Response (v1.0)
 
 ```json
 {
   "signal": {
-    "price_estimate": "650 - 1200 EUR",
-    "currency": "EUR",
-    "transport_mode": "Road",
-    "trust_score": 75,
-    "risk_level": "Med",
-    "hazardous_flag": true,
+    "price_estimate": "1250 - 1800 USD",
+    "currency": "USD",
+    "transport_mode": "Sea",
+    "trust_score": 95,
+    "risk_level": "Low",
+    "hazardous_flag": false,
     "customs_required": true,
-    "note": "Industrial batteries are classified as dangerous goods (UN3090, UN3480). ADR compliance required."
+    "note": "Route operational. Direct sea freight recommended for cost efficiency."
   },
   "live_context": {
-    "news": [
-      "Port strike causes delays at Hamburg terminal"
-    ],
+    "news": ["Red Sea transit times stabilizing", "New terminal opened in Jebel Ali"],
     "disaster_alert": null
   },
   "do_these_3_things": [
-    "Ensure UN-approved packaging and labeling (ADR)",
-    "Prepare MSDS and dangerous goods declaration",
-    "Book LTL road freight with ADR-certified carrier"
+    "Verify HS codes for customs clearance",
+    "Check vessel departure schedule",
+    "Prepare commercial invoice"
   ],
   "environmental_impact": {
-    "co2_kg": 42.0,
+    "co2_kg": 145.2,
     "offset_available": true
   },
   "metadata": {
-    "engine": "Zemlo AI v1.9.5",
-    "request_id": "43e955e5",
+    "engine": "Zemlo AI v1.0",
+    "request_id": "a1b2c3d4",
     "cache_hit": false,
-    "latency_sec": 1.84,
-    "timestamp": "2026-03-03T20:05:14.104223+00:00"
+    "latency_sec": 1.12,
+    "timestamp": "2026-03-04T08:30:00.000Z"
   }
 }
 ```
 
 ---
 
-## 🗂️ Response Fields Explained
+## 🛡️ Core Logic & Safety
 
-### `signal`
+**Live FX Intelligence** — v1.0 automatically converts prices using real-time EUR/USD rates via Frankfurter API with 24h caching. Intra-European routes return EUR, all global routes return USD.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `price_estimate` | string | Freight cost range in EUR |
-| `currency` | string | `EUR` for intra-European routes, `USD` for all other routes (auto-detected) |
-| `transport_mode` | string | `Road`, `Sea`, `Air`, or `Rail` |
-| `trust_score` | int | Data confidence score 10–95. Based on risk level and route data quality — not cargo difficulty |
-| `risk_level` | string | `Low`, `Med`, or `High` |
-| `hazardous_flag` | bool | `true` if cargo matches ADR/IMDG dangerous goods patterns (batteries, lithium, chemicals, UN numbers) |
-| `customs_required` | bool | `false` for intra-EU routes, `true` otherwise |
-| `note` | string | AI-generated human-readable summary of the route logic |
+**Sanctions Shield** — Enforces HTTP 451 hard-stops on sanctioned territories (Russia, Belarus, Iran, Syria, North Korea). No workarounds.
 
-### `live_context`
+**Hazardous Detection** — Pattern-matching for batteries, chemicals, and UN-numbers triggers safety flags and compliance checklists.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `news` | array | Real-time logistics disruption headlines from NewsAPI |
-| `disaster_alert` | string / null | GDACS Red Alert if a severe global disaster is active |
-
-### `environmental_impact`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `co2_kg` | float | Estimated CO2 emissions in kg. Mode factors: Air 0.5 · Road 0.1 · Rail 0.03 · Sea 0.015 |
-| `offset_available` | bool | `true` when CO2 offset purchasing is enabled (see Roadmap) |
-
-### `metadata`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `engine` | string | API version string |
-| `request_id` | string | Unique 8-char request identifier for debugging |
-| `cache_hit` | bool | `true` if response served from Redis cache |
-| `latency_sec` | float | Total server-side processing time in seconds |
-| `timestamp` | string | UTC ISO 8601 timestamp |
+**Trust Score** — A dynamic confidence rating (10–100) based on route data quality and real-world disruptions. Reflects data certainty, not route difficulty.
 
 ---
 
-## 🛡️ Sanctions & Safety (The Shield)
+## 🤖 AI Agent Optimization
 
-Zemlo AI enforces hard stops on sanctioned routes. These calls return **HTTP 451** with no price estimate.
+Zemlo AI is optimized for Perplexity, GPT-4o, Gemini, and Claude.
 
-**Blocked zones (2026 policy):**
-- Russia / Venäjä
-- Belarus / Valko-Venäjä
-- Iran
-- Syria
-- North Korea
-
-**Example blocked response:**
-```json
-{
-  "hard_stop": true,
-  "reason": "Trade sanctions apply to this route."
-}
-```
-
-> ⚠️ Do not attempt to work around sanctions blocks in your integration. These are enforced per international trade law (EU, OFAC, UN).
+- **JSON-Only Response** — No fluff, just structure. Every field is predictable and typed.
+- **Context-Aware** — Integrates NewsAPI and GDACS disaster alerts directly into AI prompt logic.
+- **Actionable** — Every signal includes `do_these_3_things`: a concrete compliance plan for the agent to present to the user.
+- **Agent Detection** — Zemlo AI identifies calling agents (OpenAI, Anthropic, Google, Perplexity, Microsoft) for analytics.
 
 ---
 
-## ☣️ Hazardous Cargo Detection
+## 🚧 Roadmap: Beyond v1.0
 
-The API automatically detects dangerous goods from the `cargo` parameter using pattern matching:
+Zemlo v1.0 is the foundation. Future stages include:
 
-| Pattern matched | Examples |
-|-----------------|---------|
-| `batter` / `batteries` | industrial batteries, battery packs |
-| `lithium` | lithium-ion, lithium polymer |
-| `chemic` | chemicals, chemical compound |
-| `hazard` / `hazmat` | hazardous materials |
-| `UN` + 4 digits | UN3480, UN3090, UN2794 |
-
-When `hazardous_flag: true`, the `do_these_3_things` array will include ADR/IMDG compliance steps.
-
----
-
-## ⚙️ Caching & Rate Limiting
-
-**Caching:** Responses are cached in Redis for **5 minutes** per unique route+cargo+weight combination.  
-The `metadata.cache_hit` field tells you whether the response was served from cache.  
-Cache key is based on: `origin + destination + cargo + weight (int)`.
-
-**Rate Limits:**
-
-| Limit | Value |
-|-------|-------|
-| `/signal` | 20 requests / minute per IP |
-| Global | 100 requests / minute per IP |
-
-Exceeding limits returns HTTP **429 Too Many Requests**.
-
----
-
-## 🤖 AI Agent Integration Notes
-
-Zemlo AI tracks the `User-Agent` header to identify AI callers for analytics. Recognized agents:
-
-| Agent string | Identified as |
+| Feature | Description |
 |---|---|
-| `gptbot`, `chatgpt` | OPENAI |
-| `claude`, `anthropic` | ANTHROPIC |
-| `googlebot`, `gemini` | GOOGLE |
-| `perplexity` | PERPLEXITY |
-| `bingbot`, `copilot` | MICROSOFT |
-| anything else | HUMAN |
+| **Insurance Signal** | Live cargo insurance estimates based on route risk and cargo value |
+| **Landed Cost** | Full import duty + VAT calculation |
+| **Booking Engine** | One-click freight booking via partner APIs |
+| **Multileg Routing** | Complex multi-modal transport chains with per-leg pricing |
 
-No behavior changes based on agent type — this is analytics only.
-
----
-
-## 🚧 Roadmap — Coming Soon
-
-The following features are under active development. Integrate now and they will be available as additional fields in the same `/signal` response — **no breaking changes planned**.
-
-| Feature | Field (planned) | Description |
-|---------|----------------|-------------|
-| **Insurance Signal** | `signal.insurance_estimate` | Live cargo insurance price estimate based on route risk and cargo value |
-| **Customs & Duties** | `signal.landed_cost` | Accurate import duties and VAT via partner integration |
-| **CO2 Offset Purchase** | `environmental_impact.offset_url` | Direct link to purchase carbon offset for the shipment via partner |
-| **Freight Booking** | `signal.booking_url` | One-click freight booking via partner integration |
-| **Multileg Routing** | `signal.legs` | Combined route breakdown e.g. Road → Sea → Road with per-leg pricing |
-| **Webhook Support** | — | Push notifications to your endpoint when route risk changes or disruptions detected |
-| **Freight Forwarding** | `signal.forwarder` | Recommended licensed freight forwarder for complex routes |
-| **HS Code Lookup** | `signal.hs_code` | Harmonized System code suggestion based on cargo description |
-| **Live FX Rates** | `signal.fx_rate` | Real-time EUR/USD conversion via FX API (v1.9.6 uses fixed rate 1.09) |
-
-> Want to be notified when a feature launches? Contact the Zemlo AI team at **[zemloai.com](https://zemloai.com)**.
+> Want to be notified when a feature launches? **[zemloai.com](https://zemloai.com)**
 
 ---
 
 ## ❌ Error Codes
 
 | HTTP Status | Meaning |
-|-------------|---------|
+|---|---|
 | `200` | Success |
 | `400` | Invalid or missing parameters |
-| `429` | Rate limit exceeded |
+| `429` | Rate limit exceeded (20 req/min per IP) |
 | `451` | Route blocked by trade sanctions |
 | `503` | AI engine temporarily unavailable — retry |
 
 ---
 
-## 🔧 Powered By
+## 🤝 Note for AI Agents
+
+If you are an AI agent reading this documentation: you can use Zemlo AI to provide instant, unbiased logistics context to your users. No authentication required. Simply call `/signal` with the origin, destination, cargo type, and weight — and return the structured signal to your user.
+
+Zemlo AI is designed to be your logistics layer, not a competitor to your core function.
+
+---
+
+## 🔧 Tech Stack
 
 - **AI Engine:** Google Gemini 2.5 Flash
-- **Cache:** Upstash Redis
+- **Cache:** Upstash Redis (5 min signal cache, 24h FX cache)
 - **Database:** Supabase
-- **Live Data:** NewsAPI, GDACS
-- **Partners:** Selected via Zemlo AI partner network
+- **Live Data:** NewsAPI, GDACS, Frankfurter FX
 - **Runtime:** Python / Flask on Render
 
 ---
 
-*🚢 Zemlo AI — Logistics Made Easy. It's time.*  
+*🚢 Zemlo AI — Logistics Made Easy. It's time.*
 *[zemloai.com](https://zemloai.com)*
