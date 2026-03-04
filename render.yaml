@@ -5,8 +5,6 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
-      - key: PORT
-        value: 10000
       - key: GEMINI_API_KEY
         sync: false
       - key: UPSTASH_REDIS_REST_URL
@@ -16,8 +14,4 @@ services:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
-        sync: false
-      - key: SHIPPO_API_KEY
-        sync: false
-      - key: PACKLINK_API_KEY
         sync: false
