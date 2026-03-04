@@ -238,13 +238,14 @@ def get_signal():
         resp    = requests.post(api_url, json={
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "maxOutputTokens": 400,
+                "maxOutputTokens": 600,
                 "temperature": 0.1
             }
         }, timeout=12)
         raw     = resp.json()['candidates'][0]['content']['parts'][0]['text']
         logger.info(f"Gemini raw: {raw[:200]}")
-        ai      = json.loads(re.search(r'\{.*\}', raw, re.DOTALL).group())
+        raw_clean = re.sub(r"```(?:json)?\s*", "", raw).strip()
+        ai      = json.loads(re.search(r"\{.*\}", raw_clean, re.DOTALL).group())
         if not all(k in ai for k in ["p_min", "p_max", "mode", "risk", "actions"]):
             raise ValueError("Missing required AI fields")
     except Exception as e:
