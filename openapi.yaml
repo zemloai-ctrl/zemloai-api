@@ -1,16 +1,29 @@
 openapi: 3.0.0
 info:
   title: Zemlo AI Signal API
-  description: The Global Logistics Signal Layer. Provides AI-driven situational awareness, Trust Scores, and compliance checklists.
+  description: >
+    The Global Logistics Signal Layer for AI agents and developers.
+    Carrier-neutral. Zero-auth. Provides AI-driven price ranges, real-time risk analysis,
+    live FX-calibrated estimates, sanctions compliance, and actionable checklists.
+    Built for the autonomous AI-agent economy.
   version: 1.0.0
+  contact:
+    email: info@zemloai.com
+    url: https://zemloai.com
+
 servers:
   - url: https://zemloai-api.onrender.com
     description: Production server
+
 paths:
   /signal:
     get:
-      summary: Get a logistics signal
-      description: Returns a price range, trust score, risk assessment, and a 3-step compliance checklist.
+      summary: Get a logistics signal (GET)
+      description: >
+        Returns a structured logistics signal including price range, transport mode,
+        trust score, risk level, hazardous flag, customs requirement, live news context,
+        CO2 impact, and a 3-step compliance checklist. Currency is auto-detected based
+        on route (EUR for intra-Europe, USD for global routes).
       parameters:
         - name: from
           in: query
@@ -18,43 +31,273 @@ paths:
           schema:
             type: string
           example: Helsinki
+          description: Origin city or country
         - name: to
           in: query
           required: true
           schema:
             type: string
-          example: Belgrade
+          example: Tokyo
+          description: Destination city or country
         - name: cargo
           in: query
           required: false
           schema:
             type: string
-          example: Industrial batteries
+          example: Electronics
+          description: Cargo description (e.g. "industrial batteries", "electronics")
         - name: weight
           in: query
           required: false
           schema:
             type: number
-          example: 200
+          example: 500
+          description: Cargo weight in kilograms (default 500)
       responses:
         '200':
           description: A successful logistics signal
           content:
             application/json:
               schema:
+                $ref: '#/components/schemas/SignalResponse'
+        '400':
+          description: Invalid or missing parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded (20 requests per minute per IP)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '451':
+          description: Route blocked by international trade sanctions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SanctionsResponse'
+        '503':
+          description: AI engine temporarily unavailable — retry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      summary: Get a logistics signal (POST)
+      description: >
+        Same as GET /signal but accepts parameters as a JSON body.
+        Preferred for AI agents and programmatic integrations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - from
+                - to
+              properties:
+                from:
+                  type: string
+                  example: Shanghai
+                  description: Origin city or country
+                to:
+                  type: string
+                  example: Rotterdam
+                  description: Destination city or country
+                cargo:
+                  type: string
+                  example: Lithium Batteries
+                  description: Cargo description
+                weight:
+                  type: number
+                  example: 1200
+                  description: Cargo weight in kilograms (default 500)
+      responses:
+        '200':
+          description: A successful logistics signal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalResponse'
+        '400':
+          description: Invalid or missing parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '451':
+          description: Route blocked by international trade sanctions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SanctionsResponse'
+        '503':
+          description: AI engine temporarily unavailable — retry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      summary: Service health check
+      description: >
+        Returns service status and version. Use ?deep=true for full
+        infrastructure status including Redis and Supabase connectivity.
+      parameters:
+        - name: deep
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [true]
+          description: Set to "true" for full infrastructure status
+      responses:
+        '200':
+          description: Service is operational
+          content:
+            application/json:
+              schema:
                 type: object
                 properties:
-                  signal:
+                  status:
+                    type: string
+                    example: Operational
+                  version:
+                    type: string
+                    example: "1.0"
+                  services:
                     type: object
+                    description: Only present when ?deep=true
                     properties:
-                      price_estimate: {type: string}
-                      trust_score: {type: integer}
-                      transport_mode: {type: string}
-                      risk_level: {type: string}
-                  do_these_3_things:
-                    type: array
-                    items: {type: string}
-                  metadata:
-                    type: object
-                    properties:
-                      engine: {type: string}
+                      redis:
+                        type: string
+                        example: Connected
+                      supabase:
+                        type: string
+                        example: Connected
+
+components:
+  schemas:
+    SignalResponse:
+      type: object
+      properties:
+        signal:
+          type: object
+          properties:
+            price_estimate:
+              type: string
+              example: "1250 - 1800 USD"
+              description: Freight cost range in auto-detected currency
+            currency:
+              type: string
+              enum: [EUR, USD]
+              example: USD
+              description: EUR for intra-European routes, USD for all global routes
+            transport_mode:
+              type: string
+              enum: [Road, Sea, Air, Rail]
+              example: Sea
+            trust_score:
+              type: integer
+              minimum: 10
+              maximum: 100
+              example: 95
+              description: Data confidence rating (10-100). Reflects certainty, not route difficulty.
+            risk_level:
+              type: string
+              enum: [Low, Med, High]
+              example: Low
+            hazardous_flag:
+              type: boolean
+              example: false
+              description: True if cargo matches hazardous patterns (batteries, chemicals, UN-numbers)
+            customs_required:
+              type: boolean
+              example: true
+              description: False for same customs-zone routes, true for cross-border shipments
+            note:
+              type: string
+              example: "Route operational. Direct sea freight recommended."
+              description: AI-generated contextual note for the route
+        live_context:
+          type: object
+          properties:
+            news:
+              type: array
+              items:
+                type: string
+              example: ["Red Sea transit times stabilizing"]
+              description: Real-time logistics disruption headlines from NewsAPI
+            disaster_alert:
+              type: string
+              nullable: true
+              example: null
+              description: GDACS Red Alert if a severe global disaster is active
+        do_these_3_things:
+          type: array
+          items:
+            type: string
+          example:
+            - "Verify HS codes for customs clearance"
+            - "Check vessel departure schedule"
+            - "Prepare commercial invoice"
+          description: AI-generated 3-step compliance checklist for this shipment
+        environmental_impact:
+          type: object
+          properties:
+            co2_kg:
+              type: number
+              example: 145.2
+              description: Estimated CO2 footprint in kilograms
+            offset_available:
+              type: boolean
+              example: true
+        metadata:
+          type: object
+          properties:
+            engine:
+              type: string
+              example: "Zemlo AI v1.0"
+            request_id:
+              type: string
+              example: "a1b2c3d4"
+            cache_hit:
+              type: boolean
+              example: false
+              description: True if response was served from Redis cache
+            latency_sec:
+              type: number
+              example: 1.12
+              description: Total response time in seconds
+            timestamp:
+              type: string
+              format: date-time
+              example: "2026-03-04T08:30:00.000Z"
+
+    SanctionsResponse:
+      type: object
+      properties:
+        hard_stop:
+          type: boolean
+          example: true
+        reason:
+          type: string
+          example: "Trade sanctions apply to this route."
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Missing 'from' or 'to' parameters."
