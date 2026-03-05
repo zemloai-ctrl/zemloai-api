@@ -411,6 +411,7 @@ def get_shipengine_carrier_ids():
         return []
 
 
+def get_shipengine_rates(origin, destination, weight_kg):
     """
     Fetches real rates from ShipEngine — DHL Express, FedEx, UPS globally.
     Works from Europe. Best for international parcels.
