@@ -274,18 +274,23 @@ def get_easyship_rates(origin, destination, weight_kg):
         "origin_postal_code":         origin_addr.get("zip", ""),
         "destination_country_alpha2": dest_addr.get("country", "PH"),
         "destination_postal_code":    dest_addr.get("zip", ""),
-        "parcels": [{
-            "total_actual_weight": weight_kg,
-            "height": 15,
-            "width":  20,
-            "length": 30
-        }],
-        "output_currency": "USD"
+        "destination_city":           dest_addr.get("city", destination),
+        "taxes_duties_paid_by":       "Sender",
+        "is_insured":                 False,
+        "items": [{
+            "actual_weight":          weight_kg,
+            "height":                 15,
+            "width":                  20,
+            "length":                 30,
+            "category":               "mobiles",
+            "declared_currency":      "USD",
+            "declared_customs_value": 100
+        }]
     }
 
     try:
         resp = requests.post(
-            "https://public-api-sandbox.easyship.com/rates/v2",
+            "https://public-api-sandbox.easyship.com/rate/v1/rates",
             headers={
                 "Authorization": f"Bearer {EASYSHIP_KEY}",
                 "Content-Type":  "application/json"
@@ -294,17 +299,18 @@ def get_easyship_rates(origin, destination, weight_kg):
             timeout=15
         )
         data = resp.json()
+        logger.info(f"Easyship raw response: {str(data)[:200]}")
 
         rates = []
         for rate in data.get("rates", []):
-            total = rate.get("total_charge") or rate.get("shipment_charge")
+            total = rate.get("total_charge") or rate.get("shipment_charge_total")
             if total:
                 rates.append({
                     "carrier":  rate.get("courier_name", "Courier"),
-                    "service":  rate.get("service_name", ""),
+                    "service":  rate.get("courier_service_code", ""),
                     "price":    float(total),
                     "currency": rate.get("currency", "USD"),
-                    "days":     rate.get("estimated_days"),
+                    "days":     rate.get("max_delivery_time"),
                     "mode":     "Air"
                 })
 
