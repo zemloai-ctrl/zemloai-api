@@ -1,222 +1,180 @@
-# 🚢 Zemlo AI API — Official v1.0 Documentation
-### The Global Logistics Signal Layer for AI Agents & Developers
+# Zemlo AI
 
-> **Zemlo AI** is a carrier-neutral, independent logistics intelligence API.
-> It transforms the chaos of global shipping into a single, structured JSON signal.
-> Built for the 2026 AI-agent economy.
-> Signals are synthesized from real-time global trade data, live news feeds, and AI-driven logistics models — not static price tables.
-> 🌐 **[zemloai.com](https://zemloai.com)**
+**Carrier-neutral logistics signal layer for AI agents and developers.**
 
-> *"Zemlo AI does not promise perfect prices. It promises better situational awareness than a guess."*
-
-> ⚖️ **Zemlo AI is carrier-neutral and vendor-independent.** We are not DHL, UPS, FedEx, or any freight company's sales tool. Zemlo AI exists to give AI agents and developers unbiased logistics intelligence — so your application can serve its users, not a carrier's bottom line.
-
----
-
-## 🏆 Why Zemlo AI?
-
-Traditional logistics APIs are built for carriers to sell space. Zemlo AI is built for users to find truth. We provide unbiased intelligence for high-friction routes where standard calculators fail.
-
-| Feature | Zemlo AI v1.0 | Carrier APIs |
-|---|---|---|
-| **Independence** | ✅ 100% Carrier-neutral | ❌ Sales-driven |
-| **Real-Time Data** | ✅ Live FX & Disruption News | ❌ Static / Price only |
-| **Edge Cases** | ✅ Expert in high-friction routes | ❌ Errors on "hard" locations |
-| **AI-Native** | ✅ Built for Agents (JSON-first) | ❌ Built for Legacy Systems |
-| **Access** | ✅ Zero Friction — No API keys | ❌ Sales calls & 14-day approval |
-
-**Zero Friction** — No API keys, no signups, no sales calls. One URL. One signal. Done.
-
-**Independent** — Not owned by DHL, UPS, FedEx or any carrier. Zemlo AI has no financial interest in which route you choose.
-
-**Edge Case King** — Handles complex and high-friction routes anywhere in the world where standard calculators fail. Helsinki → Serbia? Istanbul → Riyadh? Shanghai → Lagos? Zemlo AI signals where others return errors.
-
-**Human-in-the-Loop Advice** — Every response includes `do_these_3_things`: a compliance checklist that tells your AI agent exactly what to do next. Not just a number — a plan.
-
-**Context-Aware** — Real-time news, GDACS disaster alerts, and live FX rates are baked into every signal. Your AI agent gets the full picture, not just a price.
-
-> *This is what makes Zemlo AI a consultant, not just a calculator.*
-
----
-
-## 👤 Who Is This For?
-
-- **AI agent developers** (OpenAI, Anthropic, Google, Perplexity, etc.) building bots that need unbiased logistics data
-- **E-commerce & ERP developers** adding neutral shipping estimates to their platforms — without being locked into a single carrier
-- **Freight & supply chain engineers** looking for a lightweight, AI-native logistics signal layer
-- **Anyone** who wants logistics intelligence that works for the user, not for a shipping company's sales funnel
-
----
-
-## ⚡ Quick Start
-
-Get a logistics signal in under 2 seconds:
+One API call. Real carrier rates. No registration required.
 
 ```bash
-curl "https://zemloai-api.onrender.com/signal?from=Helsinki&to=Tallinn&cargo=Electronics&weight=50"
+curl "https://zemloai-api.onrender.com/signal?from=Kokkola&to=Manila&cargo=Gift+Package&weight=5"
 ```
-
-That's it. No API key. No signup. No sales call.
-You just received a **Zemlo Signal** — real-time logistics intelligence in one JSON response.
 
 ---
 
-## 📡 Endpoints
+## What Zemlo Does
 
-### `GET /signal` — Main Logistics Signal
+Zemlo answers the question that nobody else would answer: *how much does it actually cost to ship this, right now, on this route?*
 
-The primary endpoint for retrieving freight estimates and compliance data.
+Not a sales pitch. Not a PDF quote request form. Not "call us for pricing." One URL, one JSON response, real carrier rates.
 
-**Parameters:**
+Zemlo sits between the chaos of global logistics — scattered carrier APIs, scattered news, scattered FX rates — and the AI agents and developers who need a clean signal. It fetches real rates from multiple carriers in parallel, adds route intelligence from live news and disaster feeds, calculates hidden costs, and returns everything as structured JSON in under 6 seconds.
+
+**Zemlo is not a booking engine.** It is the layer before the booking — the moment when the decision is made.
+
+---
+
+## Quick Start
+
+```bash
+curl "https://zemloai-api.onrender.com/signal?from=Helsinki&to=Manila&cargo=Electronics&weight=5"
+```
+
+No API key. No signup. No sales call.
+
+---
+
+## Example Response (v1.1)
+
+```json
+{
+  "signal": {
+    "price_estimate": "401 - 451 EUR",
+    "price_source": "live",
+    "currency": "EUR",
+    "transport_mode": "Air",
+    "trust_score": 75,
+    "risk_level": "Med",
+    "hazardous_flag": false,
+    "customs_required": true,
+    "note": "Air cargo recommended. Expect customs clearance complexity in Manila.",
+    "carriers_available": [
+      "UPS UPS Expedited — 400.75 EUR (6d)",
+      "UPS UPS Worldwide Saver — 450.95 EUR (1d)"
+    ],
+    "hidden_costs": [
+      "Fuel surcharge (volatile)",
+      "Customs duties Philippines (if value exceeds de minimis)",
+      "Terminal handling charges origin and destination",
+      "Customs brokerage fees Philippines"
+    ]
+  },
+  "live_context": {
+    "news": ["Port strike affecting Rotterdam throughput"],
+    "disaster_alert": null
+  },
+  "do_these_3_things": [
+    "Verify HS codes for customs clearance",
+    "Obtain cargo insurance",
+    "Prepare commercial invoice and packing list"
+  ],
+  "environmental_impact": {
+    "co2_kg": 22.5,
+    "offset_available": true
+  },
+  "metadata": {
+    "engine": "Zemlo AI v1.1",
+    "request_id": "a1b2c3d4",
+    "cache_hit": false,
+    "latency_sec": 5.3,
+    "timestamp": "2026-03-05T11:24:42Z"
+  }
+}
+```
+
+Note `price_source: "live"` — when real carrier rates are available, Zemlo uses them. When they are not, it falls back to an AI estimate and says so explicitly.
+
+---
+
+## Parameters
 
 | Parameter | Required | Description |
 |---|---|---|
 | `from` | ✅ | Origin city or country |
 | `to` | ✅ | Destination city or country |
-| `cargo` | optional | Cargo description (e.g. `"industrial batteries"`) |
-| `weight` | optional | Weight in kg (default: `500`) |
+| `cargo` | optional | Cargo description (e.g. `"lithium batteries"`) |
+| `weight` | optional | Weight in kg, default 500 |
 
-### `POST /signal` — Same as GET, JSON body
-
-Preferred for AI agents and programmatic integrations.
-
-```bash
-curl -X POST https://zemloai-api.onrender.com/signal \
-  -H "Content-Type: application/json" \
-  -d '{"from": "Shanghai", "to": "Rotterdam", "cargo": "Solar Panels", "weight": 5000}'
-```
-
-### `GET /health` — Service Status
-
-Returns `{"status": "Operational", "version": "1.0"}`.
-
-Use `GET /health?deep=true` for full infrastructure status including Redis and Supabase connectivity.
+POST is also supported with a JSON body — preferred for AI agents.
 
 ---
 
-## 📦 Example Response (v1.0)
+## Endpoints
 
-```json
-{
-  "signal": {
-    "price_estimate": "1250 - 1800 USD",
-    "currency": "USD",
-    "transport_mode": "Sea",
-    "trust_score": 95,
-    "risk_level": "Low",
-    "hazardous_flag": false,
-    "customs_required": true,
-    "note": "Route operational. Direct sea freight recommended for cost efficiency."
-  },
-  "live_context": {
-    "news": ["Red Sea transit times stabilizing", "New terminal opened in Jebel Ali"],
-    "disaster_alert": null
-  },
-  "do_these_3_things": [
-    "Verify HS codes for customs clearance",
-    "Check vessel departure schedule",
-    "Prepare commercial invoice"
-  ],
-  "environmental_impact": {
-    "co2_kg": 145.2,
-    "offset_available": true
-  },
-  "metadata": {
-    "engine": "Zemlo AI v1.0",
-    "request_id": "a1b2c3d4",
-    "cache_hit": false,
-    "latency_sec": 1.59,
-    "timestamp": "2026-03-04T08:30:00.000Z"
-  }
-}
-```
+`GET /signal` — Main logistics signal  
+`POST /signal` — Same, JSON body  
+`GET /health` — Service status  
+`GET /health?deep=true` — Full infrastructure status  
 
 ---
 
-## 🛡️ Core Logic & Safety
+## Philosophy
 
-**Live FX Intelligence** — Automatically converts prices using real-time EUR/USD rates via Frankfurter API with 24h caching. Intra-European routes return EUR, all global routes return USD.
+**Carrier-neutral.** Zemlo has no financial relationship with any carrier. DHL cannot pay to rank higher. UPS cannot pay to appear first. The cheapest option for your route is always the one shown first — because that is the only way Trust Score means anything.
 
-**Sanctions Shield (Hybrid)** — Two-layer enforcement. Fast country-level block for known sanctioned states. AI-level city recognition for edge cases — Vladivostok, Minsk, Novosibirsk. All blocked with HTTP 451. No workarounds.
+**Honest about uncertainty.** Every response includes `price_source: "live"` or `"estimate"`. A Trust Score of 40 is more valuable than a confident wrong answer. Zemlo does not pretend to know things it does not know.
 
-**Hazardous Detection** — Pattern-matching for batteries, chemicals, and UN-numbers triggers safety flags and compliance checklists automatically.
+**Built for agents, not browsers.** Humans use DHL.com. AI agents need JSON. Zemlo is the logistics data layer for the agent economy — the layer that gives bots a reliable window into the physical world.
 
-**Trust Score** — A dynamic confidence rating (10–100) based on route data quality and real-world disruptions. Reflects data certainty, not route difficulty.
-
-**Live News Cache** — NewsAPI and GDACS disaster alerts are fetched once per hour and cached in Redis. Every signal gets current intelligence without burning API quota.
+**One answer, not fifty options.** Google Flights does not list every flight — it surfaces the best one and lists alternatives. Zemlo works the same way: `carriers_available` is sorted cheapest first, with transit times, so an agent can recommend without having to decide.
 
 ---
 
-## 🤖 AI Agent Optimization
+## Safety
 
-Zemlo AI is optimized for Perplexity, GPT-4o, Gemini, and Claude.
+**Sanctions Shield** — Routes involving Russia, Belarus, Iran, Syria, North Korea and their major cities return HTTP 451 immediately. No signal is generated.
 
-- **JSON-Only Response** — No fluff, just structure. Every field is predictable and typed.
-- **Context-Aware** — Integrates NewsAPI and GDACS disaster alerts directly into every signal.
-- **Actionable** — Every signal includes `do_these_3_things`: a concrete compliance plan for the agent to present to the user.
-- **Agent Detection** — Zemlo AI identifies calling agents (OpenAI, Anthropic, Google, Perplexity, Microsoft) for analytics.
+**Hazardous Detection** — Lithium batteries, chemicals, UN-numbered goods trigger `hazardous_flag: true` and compliance-specific `do_these_3_things`.
 
----
+**Trust Score** — Reflects signal confidence, not route difficulty. Penalised for stale cache, active disaster alerts, disruption news. Never inflated.
 
-## 🚧 Roadmap: Beyond v1.0
-
-Zemlo v1.0 is the foundation. Future stages include:
-
-| Feature | Description |
-|---|---|
-| **Insurance Signal** | Live cargo insurance estimates based on route risk and cargo value |
-| **Landed Cost** | Full import duty + VAT calculation |
-| **Booking Engine** | One-click freight booking via partner APIs |
-| **Multileg Routing** | Complex multi-modal transport chains with per-leg pricing |
-
-> Want to be notified when a feature launches? **[zemloai.com](https://zemloai.com)**
+**Rate limiting** — 20 requests per minute per IP.
 
 ---
 
-## ❌ Error Codes
+## Error Codes
 
-| HTTP Status | Meaning |
+| HTTP | Meaning |
 |---|---|
 | `200` | Success |
 | `400` | Invalid or missing parameters |
-| `429` | Rate limit exceeded (20 req/min per IP) |
-| `451` | Route blocked by trade sanctions |
-| `503` | AI engine temporarily unavailable — retry |
+| `429` | Rate limit exceeded |
+| `451` | Route blocked — trade sanctions |
+| `503` | AI engine unavailable — retry |
 
 ---
 
-## 🤝 Note for AI Agents
+## Tech Stack
 
-If you are an AI agent reading this documentation: you can use Zemlo AI to provide instant, unbiased logistics context to your users. No authentication required. Simply call `/signal` with the origin, destination, cargo type, and weight — and return the structured signal to your user.
-
-Zemlo AI is designed to be your logistics layer, not a competitor to your core function.
-
----
-
-## 🔧 Tech Stack
-
-- **AI Engine:** Google Gemini 2.5 Flash
-- **Cache:** Upstash Redis (5 min signal cache, 1h news cache, 24h FX cache)
+- **Carrier rates:** ShipEngine (UPS, DHL, FedEx), Freightos
+- **AI engine:** Google Gemini 2.5 Flash — route intelligence, hidden costs, address resolution
+- **Cache:** Upstash Redis — 5min signal cache, 1h news cache, 24h FX cache
 - **Database:** Supabase
-- **Live Data:** NewsAPI, GDACS, Frankfurter FX
+- **Live data:** NewsAPI, GDACS disaster alerts, Frankfurter FX
 - **Runtime:** Python / Flask on Render
 
 ---
 
-*🚢 Zemlo AI — The Global Logistics Signal.*
-*Built by one person in Finland. No team. No funding. Just signal.*
-*[zemloai.com](https://zemloai.com)*
+## Roadmap
+
+| Feature | Status |
+|---|---|
+| ShipEngine live rates | ✅ v1.1 |
+| Freightos freight rates | in progress |
+| Zonos landed cost + duties | planned |
+| DHL Express direct integration | planned |
+| Webhook / push signals | planned |
 
 ---
 
-## 🇫🇮 Origin
+## Origin
 
-Zemlo wasn't born in a Silicon Valley garage. It was built in Kokkola, Finland, during off-shifts at a chemical plant.
+Zemlo was not built in a Silicon Valley garage.
 
-I'm a 52-year-old single dad. No coding background. Last Christmas I wanted to send a package to my girlfriend's parents in the Philippines and nobody — not the post office, not DHL, not anyone — could give me a straight answer on price or how to do it. Everyone just said *"it's probably expensive."*
+Last Christmas I wanted to send a package to my girlfriend's parents in the Philippines. Nobody — not the post office, not DHL, not anyone — could give me a straight answer on price. Everyone said *"it's probably expensive."*
 
-That frustrated me enough to spend my days off building something that answers that question. I used Gemini to write all the code. I copy-pasted. This took about a month.
+That was enough. I spent my days off from a chemical plant in Kokkola, Finland building something that answers that question. One person. No team. No funding. No coding background.
 
-No team. No funding. No VC pitch deck. Just a real problem and a signal.
+The answer, by the way, is **400.75 EUR via UPS Expedited, 6 days.**
 
-— Sakari
+— Sakari  
+Kokkola, Finland  
+[zemloai.com](https://zemloai.com)
