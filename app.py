@@ -405,16 +405,18 @@ def get_shipengine_rates(origin, destination, weight_kg):
         },
         "shipment": {
             "ship_from": {
-                "name":         "Zemlo Sender",
-                "city":         origin_addr.get("city", origin),
-                "postal_code":  origin_addr.get("zip", ""),
-                "country_code": origin_addr.get("country", "FI")
+                "name":          "Zemlo Sender",
+                "address_line1": "1 Main Street",
+                "city":          origin_addr.get("city", origin),
+                "postal_code":   origin_addr.get("zip", ""),
+                "country_code":  origin_addr.get("country", "FI")
             },
             "ship_to": {
-                "name":         "Zemlo Recipient",
-                "city":         dest_addr.get("city", destination),
-                "postal_code":  dest_addr.get("zip", ""),
-                "country_code": dest_addr.get("country", "PH")
+                "name":          "Zemlo Recipient",
+                "address_line1": "1 Main Street",
+                "city":          dest_addr.get("city", destination),
+                "postal_code":   dest_addr.get("zip", ""),
+                "country_code":  dest_addr.get("country", "PH")
             },
             "packages": [{
                 "weight": {
