@@ -713,7 +713,7 @@ def get_signal():
 
     try:
         weight = float(data.get("weight", 500))
-        if weight <= 0:
+        if weight <= 0.01:
             raise ValueError
     except (ValueError, TypeError):
         return jsonify({"error": "Weight must be a positive number."}), 400
@@ -723,12 +723,18 @@ def get_signal():
 
     # 1. SANCTIONS SHIELD
     o_c, d_c, c_c = origin.lower(), dest.lower(), cargo.lower()
-    SANCTIONED_COUNTRIES = [
-        "russia", "venäjä", "belarus", "valko-venäjä",
-        "iran", "syria", "north korea", "dprk"
+    if o_c == d_c:
+        return jsonify({"error": "Origin and destination cannot be the same.", "hint": "Did you mean to ship locally?"}), 400
+
+    SANCTIONED = [
+        "russia", "venäjä", "moskova", "moscow", "saint petersburg", "pietari",
+        "belarus", "valko-venäjä", "minsk",
+        "iran", "tehran", "teheran",
+        "syria", "damascus", "damaskos",
+        "north korea", "dprk", "pyongyang"
     ]
-    if any(s in o_c for s in SANCTIONED_COUNTRIES) or any(s in d_c for s in SANCTIONED_COUNTRIES):
-        return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route."}), 451
+    if any(s in o_c for s in SANCTIONED) or any(s in d_c for s in SANCTIONED):
+        return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route. Zemlo cannot provide signals for sanctioned destinations."}), 451
 
     # 2. CACHE CHECK
     cache_key = f"z1.1:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
