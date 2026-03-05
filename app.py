@@ -22,6 +22,7 @@ GEMINI_KEY   = os.environ.get("GEMINI_API_KEY")
 NEWS_KEY     = os.environ.get("NEWS_API_KEY")
 SHIPPO_KEY      = os.environ.get("SHIPPO_API_KEY")
 FREIGHTOS_KEY   = os.environ.get("FREIGHTOS_API_KEY")
+EASYSHIP_KEY    = os.environ.get("EASYSHIP_API_KEY")
 
 redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -247,6 +248,74 @@ def get_freightos_rates(origin, destination, weight_kg):
         logger.warning(f"Freightos API error: {e}")
         return []
 
+# --- EASYSHIP: REAL CARRIER RATES (EU-FIRST) ---
+
+def get_easyship_rates(origin, destination, weight_kg):
+    """
+    Fetches real rates from Easyship — 550+ couriers, strong EU coverage.
+    Best for parcels from Europe to anywhere globally.
+    Returns top 5 options sorted by price, or empty list on failure.
+    """
+    if not EASYSHIP_KEY:
+        return []
+
+    origin_addr = resolve_location(origin)
+    dest_addr   = resolve_location(destination)
+
+    if not origin_addr or not dest_addr:
+        logger.warning("Could not resolve addresses for Easyship")
+        return []
+
+    # Easyship uses grams
+    weight_g = weight_kg * 1000
+
+    payload = {
+        "origin_country_alpha2":      origin_addr.get("country", "FI"),
+        "origin_postal_code":         origin_addr.get("zip", ""),
+        "destination_country_alpha2": dest_addr.get("country", "PH"),
+        "destination_postal_code":    dest_addr.get("zip", ""),
+        "parcels": [{
+            "total_actual_weight": weight_kg,
+            "height": 15,
+            "width":  20,
+            "length": 30
+        }],
+        "output_currency": "USD"
+    }
+
+    try:
+        resp = requests.post(
+            "https://public-api-sandbox.easyship.com/rates/v2",
+            headers={
+                "Authorization": f"Bearer {EASYSHIP_KEY}",
+                "Content-Type":  "application/json"
+            },
+            json=payload,
+            timeout=15
+        )
+        data = resp.json()
+
+        rates = []
+        for rate in data.get("rates", []):
+            total = rate.get("total_charge") or rate.get("shipment_charge")
+            if total:
+                rates.append({
+                    "carrier":  rate.get("courier_name", "Courier"),
+                    "service":  rate.get("service_name", ""),
+                    "price":    float(total),
+                    "currency": rate.get("currency", "USD"),
+                    "days":     rate.get("estimated_days"),
+                    "mode":     "Air"
+                })
+
+        rates.sort(key=lambda x: x["price"])
+        logger.info(f"Easyship: {len(rates)} rates for {origin} -> {destination}")
+        return rates[:5]
+
+    except Exception as e:
+        logger.warning(f"Easyship API error: {e}")
+        return []
+
 # --- SHIPPO: REAL CARRIER RATES ---
 
 def get_shippo_rates(origin, destination, weight_kg):
@@ -410,12 +479,14 @@ def get_signal():
     # 4. FX RATE
     fx_rate = get_live_fx_rate()
 
-    # 5. PARALLEL: Shippo (≤70kg) + Freightos (all weights) + Gemini
+    # 5. PARALLEL: Easyship + Shippo (≤70kg) + Freightos + Gemini
     with concurrent.futures.ThreadPoolExecutor() as executor:
+        easyship_future  = executor.submit(get_easyship_rates, origin, dest, weight)
         shippo_future    = executor.submit(get_shippo_rates, origin, dest, weight) if weight <= 70 else None
         freightos_future = executor.submit(get_freightos_rates, origin, dest, weight)
         gemini_future    = executor.submit(get_gemini_signal, origin, dest, cargo, weight, news, alerts)
 
+        easyship_rates  = easyship_future.result()
         shippo_rates    = shippo_future.result() if shippo_future else []
         freightos_rates = freightos_future.result()
         ai              = gemini_future.result()
@@ -423,8 +494,8 @@ def get_signal():
     if not ai:
         return jsonify({"error": "Signal loss. Try again."}), 503
 
-    # 6. PRICE: merge live rates from Shippo + Freightos, fallback to Gemini
-    all_live_rates = sorted(shippo_rates + freightos_rates, key=lambda x: x["price"])
+    # 6. PRICE: merge all live rates, sort by price, fallback to Gemini
+    all_live_rates = sorted(easyship_rates + shippo_rates + freightos_rates, key=lambda x: x["price"])
 
     if all_live_rates:
         currency     = all_live_rates[0]["currency"]
@@ -528,7 +599,9 @@ def health():
             status["services"]["supabase"] = "Connected"
         except Exception:
             status["services"]["supabase"] = "Disconnected"
-        status["services"]["shippo"] = "Configured" if SHIPPO_KEY else "Missing"
+        status["services"]["shippo"]    = "Configured" if SHIPPO_KEY else "Missing"
+        status["services"]["freightos"] = "Configured" if FREIGHTOS_KEY else "Missing"
+        status["services"]["easyship"]  = "Configured" if EASYSHIP_KEY else "Missing"
         return jsonify(status)
     return jsonify({"status": "Operational", "version": "1.1"})
 
