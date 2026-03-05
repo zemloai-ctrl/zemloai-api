@@ -11,7 +11,7 @@ from supabase import create_client, Client
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Zemlo-v1.0")
+logger = logging.getLogger("Zemlo-v1.1")
 
 # --- CONFIGURATION ---
 REDIS_URL    = os.environ.get("UPSTASH_REDIS_REST_URL")
@@ -20,6 +20,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_KEY   = os.environ.get("GEMINI_API_KEY")
 NEWS_KEY     = os.environ.get("NEWS_API_KEY")
+SHIPPO_KEY   = os.environ.get("SHIPPO_API_KEY")
 
 redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -43,7 +44,6 @@ def get_live_fx_rate():
         rate = resp.json()['rates']['USD']
         try:
             redis_client.set(cache_key, rate, ex=86400)
-            logger.info(f"FX Update: 1 EUR = {rate} USD")
         except Exception:
             pass
         return float(rate)
@@ -51,7 +51,7 @@ def get_live_fx_rate():
         logger.warning(f"FX unavailable: {e}. Fallback: {DEFAULT_EUR_TO_USD}")
         return DEFAULT_EUR_TO_USD
 
-# --- BUSINESS LOGIC ---
+# --- AGENT IDENTIFICATION ---
 
 def identify_agent(ua):
     """Identifies whether the caller is a human, ghost bot, or an AI agent."""
@@ -70,29 +70,41 @@ def identify_agent(ua):
             return val
     return "HUMAN"
 
-def compute_trust(ai_data):
-    """Trust score reflects data confidence, not route difficulty."""
+# --- TRUST SCORE ---
+
+def compute_trust(ai_data, news, alerts, cache_hit):
+    """
+    Trust score = signal confidence, not route difficulty.
+    Answers: "How much should a bot trust this data right now?"
+    - Base: route risk level (proxy for how well we know this route)
+    - Penalties: stale cache, active alerts, disruption news
+    """
     risk_map = {"Low": 95, "Med": 75, "High": 45}
     score = risk_map.get(ai_data.get("risk", "Med"), 50)
     if ai_data.get("dist_km", 0) == 0:
-        score -= 15
+        score -= 15  # route unknown to AI
+    if cache_hit:
+        score -= 5   # data not freshest possible
+    if alerts:
+        score -= 10  # active disaster alert on this corridor
+    if news:
+        score -= 5   # disruption news in circulation
     return max(min(score, 100), 10)
 
+# --- CO2 ---
+
 def get_co2_impact(mode, dist_km, weight_kg):
-    """Calculates CO2 footprint using mode-specific emission factors."""
     factors = {"Air": 0.5, "Road": 0.1, "Rail": 0.03, "Sea": 0.015}
     return round(float(dist_km or 0) * (float(weight_kg) / 1000) * factors.get(mode, 0.1), 2)
 
 def get_weight_bucket(weight_kg):
-    """Categorizes shipment weight for analytics."""
     if weight_kg <= 50:  return "Light"
     if weight_kg <= 500: return "Medium"
     return "Heavy"
 
-# --- LIVE DATA FETCHING (1h cache) ---
+# --- LIVE NEWS & ALERTS (1h cache) ---
 
 def fetch_live_signals():
-    """Fetches news and disaster alerts with 1h Redis cache."""
     cache_key = "global_logistics_context"
     try:
         cached = redis_client.get(cache_key)
@@ -124,11 +136,150 @@ def fetch_live_signals():
 
     try:
         redis_client.set(cache_key, json.dumps({"news": news, "alerts": alerts}), ex=3600)
-        logger.info("Live signals cached for 1h")
     except Exception:
         pass
 
     return news, alerts
+
+# --- GEMINI: RESOLVE CITY NAME TO STRUCTURED ADDRESS ---
+
+def resolve_location(place_name):
+    """
+    Converts a city/country name into structured address for Shippo.
+    Returns dict with city, state, zip, country (ISO2).
+    """
+    prompt = (
+        f"Return ONLY JSON, no explanation: "
+        f"{{\"city\": \"str\", \"state\": \"str\", \"zip\": \"str\", \"country\": \"ISO2\"}}. "
+        f"For this place: '{place_name}'. Use main city zip. State = empty string if not applicable."
+    )
+    try:
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
+        resp = requests.post(api_url, json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 200, "temperature": 0.0, "thinkingConfig": {"thinkingBudget": 0}}
+        }, timeout=8)
+        raw = resp.json()['candidates'][0]['content']['parts'][0]['text']
+        raw_clean = re.sub(r"```(?:json)?\s*", "", raw).strip()
+        return json.loads(re.search(r"\{.*\}", raw_clean, re.DOTALL).group())
+    except Exception as e:
+        logger.warning(f"Location resolve failed for '{place_name}': {e}")
+        return None
+
+# --- SHIPPO: REAL CARRIER RATES ---
+
+def get_shippo_rates(origin, destination, weight_kg):
+    """
+    Fetches real rates from Shippo for parcel shipments (under 70kg).
+    Returns top 5 options sorted by price, or empty list on failure.
+    """
+    if not SHIPPO_KEY:
+        return []
+
+    origin_addr = resolve_location(origin)
+    dest_addr   = resolve_location(destination)
+
+    if not origin_addr or not dest_addr:
+        logger.warning("Could not resolve addresses for Shippo")
+        return []
+
+    weight_lbs = round(weight_kg * 2.20462, 2)
+
+    shipment_payload = {
+        "address_from": {
+            "city":    origin_addr.get("city", origin),
+            "state":   origin_addr.get("state", ""),
+            "zip":     origin_addr.get("zip", ""),
+            "country": origin_addr.get("country", "FI"),
+        },
+        "address_to": {
+            "city":    dest_addr.get("city", destination),
+            "state":   dest_addr.get("state", ""),
+            "zip":     dest_addr.get("zip", ""),
+            "country": dest_addr.get("country", "PH"),
+        },
+        "parcels": [{
+            "length": "30",
+            "width":  "20",
+            "height": "15",
+            "distance_unit": "cm",
+            "weight": str(weight_lbs),
+            "mass_unit": "lb"
+        }],
+        "async": False
+    }
+
+    try:
+        resp = requests.post(
+            "https://api.goshippo.com/shipments/",
+            headers={
+                "Authorization": f"ShippoToken {SHIPPO_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=shipment_payload,
+            timeout=15
+        )
+        data = resp.json()
+
+        rates = []
+        for rate in data.get("rates", []):
+            if rate.get("amount") and rate.get("provider"):
+                rates.append({
+                    "carrier":        rate["provider"],
+                    "service":        rate.get("servicelevel", {}).get("name", ""),
+                    "price":          float(rate["amount"]),
+                    "currency":       rate.get("currency", "USD"),
+                    "days":           rate.get("estimated_days"),
+                    "rate_object_id": rate.get("object_id")
+                })
+
+        rates.sort(key=lambda x: x["price"])
+        logger.info(f"Shippo: {len(rates)} rates for {origin} -> {destination}")
+        return rates[:5]
+
+    except Exception as e:
+        logger.warning(f"Shippo API error: {e}")
+        return []
+
+# --- GEMINI: ROUTE INTELLIGENCE ---
+
+def get_gemini_signal(origin, dest, cargo, weight, news, alerts):
+    """
+    Gemini provides route context: mode, risk, customs, actions, hidden costs.
+    Used for intelligence layer — price comes from Shippo when available.
+    """
+    prompt = (
+        f"Return ONLY JSON: {{\"mode\":\"Road|Sea|Air|Rail\", "
+        f"\"currency\":\"EUR|USD\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"], "
+        f"\"p_min\":int, \"p_max\":int, "
+        f"\"dist_km\":int, \"customs\":bool, \"note\":\"str\", "
+        f"\"hidden_costs\":[\"str\"]}}. "
+        f"Use EUR for intra-European routes, USD for all global routes. "
+        f"Route: {origin} to {dest}. Cargo: {cargo}, {weight}kg. "
+        f"Context News: {json.dumps(news)}. Alerts: {alerts}. "
+        f"CRITICAL: Evaluate risk ONLY for THIS SPECIFIC ROUTE. "
+        f"In hidden_costs: list realistic extra costs specific to this route — "
+        f"fuel surcharges, customs duties, handling fees, insurance estimates."
+    )
+    try:
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
+        resp = requests.post(api_url, json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 1000,
+                "temperature": 0.1,
+                "thinkingConfig": {"thinkingBudget": 0}
+            }
+        }, timeout=12)
+        raw       = resp.json()['candidates'][0]['content']['parts'][0]['text']
+        raw_clean = re.sub(r"```(?:json)?\s*", "", raw).strip()
+        ai        = json.loads(re.search(r"\{.*\}", raw_clean, re.DOTALL).group())
+        if not all(k in ai for k in ["mode", "risk", "actions"]):
+            raise ValueError("Missing required fields")
+        return ai
+    except Exception as e:
+        logger.error(f"Gemini failure: {e}")
+        return None
 
 # --- SIGNAL ENDPOINT ---
 
@@ -161,8 +312,8 @@ def get_signal():
     if any(s in o_c for s in SANCTIONED_COUNTRIES) or any(s in d_c for s in SANCTIONED_COUNTRIES):
         return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route."}), 451
 
-    # 2. CACHE (5 min TTL)
-    cache_key = f"z1.0:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
+    # 2. CACHE CHECK
+    cache_key = f"z1.1:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
         if cached:
@@ -172,69 +323,68 @@ def get_signal():
     except Exception:
         pass
 
-    # 3. LIVE INTELLIGENCE (1h cached)
+    # 3. LIVE INTELLIGENCE
     news, alerts = fetch_live_signals()
 
     # 4. FX RATE
     fx_rate = get_live_fx_rate()
 
-    # 5. AI ENGINE (Gemini 2.5 Flash)
-    prompt = (
-        f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
-        f"\"currency\":\"EUR|USD\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"], "
-        f"\"dist_km\":int, \"customs\":bool, \"note\":\"str\"}}. "
-        f"Use EUR for intra-European routes, USD for all global routes. "
-        f"Route: {origin} to {dest}. Cargo: {cargo}, {weight}kg. "
-        f"Context News: {json.dumps(news)}. Alerts: {alerts}. "
-        f"CRITICAL: Evaluate risk ONLY based on facts relevant to THIS SPECIFIC ROUTE. "
-        f"Middle East conflict does NOT affect North Atlantic or trans-Pacific air routes. "
-        f"If news are irrelevant to this route, ignore them and set risk based on route reality."
-    )
+    # 5. PARALLEL: Shippo (parcels ≤70kg) + Gemini (always)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        shippo_future = executor.submit(get_shippo_rates, origin, dest, weight) if weight <= 70 else None
+        gemini_future = executor.submit(get_gemini_signal, origin, dest, cargo, weight, news, alerts)
+        shippo_rates  = shippo_future.result() if shippo_future else []
+        ai            = gemini_future.result()
 
-    try:
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
-        resp    = requests.post(api_url, json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": 1000,
-                "temperature": 0.1,
-                "thinkingConfig": {"thinkingBudget": 0}
-            }
-        }, timeout=12)
-        raw       = resp.json()['candidates'][0]['content']['parts'][0]['text']
-        raw_clean = re.sub(r"```(?:json)?\s*", "", raw).strip()
-        ai        = json.loads(re.search(r"\{.*\}", raw_clean, re.DOTALL).group())
-        if not all(k in ai for k in ["p_min", "p_max", "mode", "risk", "actions"]):
-            raise ValueError("Missing required AI fields")
-    except Exception as e:
-        logger.error(f"AI Failure: {e}")
+    if not ai:
         return jsonify({"error": "Signal loss. Try again."}), 503
 
-    # 6. COMPLIANCE & CALCULATIONS
-    currency = ai.get("currency", "USD")
-    p_min = ai['p_min']
-    p_max = ai['p_max']
-    if currency == "USD":
-        p_min = round(p_min * fx_rate)
-        p_max = round(p_max * fx_rate)
+    # 6. PRICE: Shippo live rates OR Gemini estimate fallback
+    if shippo_rates:
+        currency     = shippo_rates[0]["currency"]
+        price_min    = shippo_rates[0]["price"]
+        price_max    = shippo_rates[-1]["price"] if len(shippo_rates) > 1 else price_min * 1.5
+        price_source = "live"
+        carriers_available = [
+            f"{r['carrier']} {r['service']} — {r['price']} {r['currency']}"
+            + (f" ({r['days']}d)" if r.get("days") else "")
+            for r in shippo_rates
+        ]
+    else:
+        currency  = ai.get("currency", "USD")
+        p_min_raw = ai.get("p_min", 500)
+        p_max_raw = ai.get("p_max", 1000)
+        if currency == "USD":
+            price_min = round(p_min_raw * fx_rate)
+            price_max = round(p_max_raw * fx_rate)
+        else:
+            price_min = p_min_raw
+            price_max = p_max_raw
+        price_source       = "estimate"
+        carriers_available = []
 
+    # 7. MISC CALCULATIONS
     is_haz = bool(re.search(r'(batter|lithium|chemic|hazard|hazmat|\bun\d{4}\b)', c_c))
     bucket = get_weight_bucket(weight)
     co2    = get_co2_impact(ai['mode'], ai.get("dist_km", 0), weight)
     req_id = str(uuid.uuid4())
     ua     = request.headers.get('User-Agent', '')
+    trust  = compute_trust(ai, news, alerts, False)
 
-    # 7. RESPONSE
+    # 8. RESPONSE
     response = {
         "signal": {
-            "price_estimate":   f"{p_min} - {p_max} {currency}",
-            "currency":         currency,
-            "transport_mode":   ai['mode'],
-            "trust_score":      compute_trust(ai),
-            "risk_level":       ai.get("risk", "Med"),
-            "hazardous_flag":   is_haz,
-            "customs_required": ai.get("customs", True),
-            "note":             ai.get("note", "")
+            "price_estimate":     f"{round(price_min)} - {round(price_max)} {currency}",
+            "price_source":       price_source,
+            "currency":           currency,
+            "transport_mode":     ai['mode'],
+            "trust_score":        trust,
+            "risk_level":         ai.get("risk", "Med"),
+            "hazardous_flag":     is_haz,
+            "customs_required":   ai.get("customs", True),
+            "note":               ai.get("note", ""),
+            "carriers_available": carriers_available,
+            "hidden_costs":       ai.get("hidden_costs", [])
         },
         "live_context": {
             "news":           news,
@@ -246,7 +396,7 @@ def get_signal():
             "offset_available": True
         },
         "metadata": {
-            "engine":      "Zemlo AI v1.0",
+            "engine":      "Zemlo AI v1.1",
             "request_id":  req_id[:8],
             "cache_hit":   False,
             "latency_sec": round(time.time() - start_time, 2),
@@ -254,7 +404,7 @@ def get_signal():
         }
     }
 
-    # 8. STORAGE
+    # 9. STORAGE
     try:
         redis_client.set(cache_key, json.dumps(response), ex=300)
         supabase.table("signals").insert({
@@ -267,7 +417,7 @@ def get_signal():
             "bot_name":       ua[:100],
             "co2_kg":         co2,
             "price_estimate": response["signal"]["price_estimate"],
-            "trust_score":    response["signal"]["trust_score"],
+            "trust_score":    trust,
             "currency":       currency,
             "weight_bucket":  bucket
         }).execute()
@@ -280,9 +430,8 @@ def get_signal():
 
 @app.route("/health")
 def health():
-    """Lightweight health check. Use ?deep=true for full infrastructure status."""
     if request.args.get("deep") == "true":
-        status = {"status": "Operational", "version": "1.0", "services": {}}
+        status = {"status": "Operational", "version": "1.1", "services": {}}
         try:
             redis_client.get("health-check")
             status["services"]["redis"] = "Connected"
@@ -293,14 +442,15 @@ def health():
             status["services"]["supabase"] = "Connected"
         except Exception:
             status["services"]["supabase"] = "Disconnected"
+        status["services"]["shippo"] = "Configured" if SHIPPO_KEY else "Missing"
         return jsonify(status)
-    return jsonify({"status": "Operational", "version": "1.0"})
+    return jsonify({"status": "Operational", "version": "1.1"})
 
 @app.route("/")
 def index():
     return jsonify({
         "name":        "Zemlo AI",
-        "version":     "1.0",
+        "version":     "1.1",
         "description": "Carrier-neutral logistics signal layer for AI agents and developers.",
         "status":      "Operational",
         "usage":       "GET /signal?from=Helsinki&to=Manila&cargo=Electronics&weight=20",
@@ -308,8 +458,6 @@ def index():
         "auth":        "None required",
         "contact":     "info@zemloai.com"
     })
-
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
