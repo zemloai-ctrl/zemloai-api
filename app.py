@@ -20,7 +20,8 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_KEY   = os.environ.get("GEMINI_API_KEY")
 NEWS_KEY     = os.environ.get("NEWS_API_KEY")
-SHIPPO_KEY   = os.environ.get("SHIPPO_API_KEY")
+SHIPPO_KEY      = os.environ.get("SHIPPO_API_KEY")
+FREIGHTOS_KEY   = os.environ.get("FREIGHTOS_API_KEY")
 
 redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -165,6 +166,86 @@ def resolve_location(place_name):
     except Exception as e:
         logger.warning(f"Location resolve failed for '{place_name}': {e}")
         return None
+
+# --- GEMINI: RESOLVE CITY TO LOCODE ---
+
+def resolve_locode(place_name):
+    """
+    Converts a city name to UN/LOCODE or IATA code for Freightos.
+    Returns e.g. "HEL" for Helsinki, "MNL" for Manila.
+    """
+    prompt = (
+        f"Return ONLY the 3-letter IATA airport code or UN/LOCODE for: '{place_name}'. "
+        f"No explanation, just the code. Examples: Helsinki=HEL, Manila=MNL, Rotterdam=RTM, Shanghai=SHA."
+    )
+    try:
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
+        resp = requests.post(api_url, json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 10, "temperature": 0.0, "thinkingConfig": {"thinkingBudget": 0}}
+        }, timeout=6)
+        code = resp.json()['candidates'][0]['content']['parts'][0]['text'].strip().upper()
+        if re.match(r'^[A-Z]{3}$', code):
+            return code
+        return None
+    except Exception as e:
+        logger.warning(f"Locode resolve failed for '{place_name}': {e}")
+        return None
+
+# --- FREIGHTOS: REAL FREIGHT RATES ---
+
+def get_freightos_rates(origin, destination, weight_kg):
+    """
+    Fetches real international freight rates from Freightos.
+    Covers Air, Sea, Road globally. Best for >10kg shipments.
+    Returns list of rate options sorted by price, or empty list on failure.
+    """
+    if not FREIGHTOS_KEY:
+        return []
+
+    origin_code = resolve_locode(origin)
+    dest_code   = resolve_locode(destination)
+
+    if not origin_code or not dest_code:
+        logger.warning(f"Could not resolve locodes for Freightos: {origin} -> {destination}")
+        return []
+
+    try:
+        params = {
+            "origin":      origin_code,
+            "destination": dest_code,
+            "weight":      weight_kg,
+            "loadtype":    "boxes",
+            "quantity":    1,
+            "apiKey":      FREIGHTOS_KEY
+        }
+        resp = requests.get(
+            "https://ship.freightos.com/api/shippingCalculator",
+            params=params,
+            timeout=15
+        )
+        data = resp.json()
+
+        rates = []
+        for quote in data.get("quotes", []):
+            price = quote.get("totalPrice") or quote.get("price")
+            if price:
+                rates.append({
+                    "carrier":  quote.get("provider", "Freight Forwarder"),
+                    "service":  quote.get("serviceType", ""),
+                    "price":    float(price),
+                    "currency": quote.get("currency", "USD"),
+                    "days":     quote.get("transitDays"),
+                    "mode":     quote.get("mode", "")
+                })
+
+        rates.sort(key=lambda x: x["price"])
+        logger.info(f"Freightos: {len(rates)} rates for {origin_code} -> {dest_code}")
+        return rates[:5]
+
+    except Exception as e:
+        logger.warning(f"Freightos API error: {e}")
+        return []
 
 # --- SHIPPO: REAL CARRIER RATES ---
 
@@ -329,26 +410,31 @@ def get_signal():
     # 4. FX RATE
     fx_rate = get_live_fx_rate()
 
-    # 5. PARALLEL: Shippo (parcels ≤70kg) + Gemini (always)
+    # 5. PARALLEL: Shippo (≤70kg) + Freightos (all weights) + Gemini
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        shippo_future = executor.submit(get_shippo_rates, origin, dest, weight) if weight <= 70 else None
-        gemini_future = executor.submit(get_gemini_signal, origin, dest, cargo, weight, news, alerts)
-        shippo_rates  = shippo_future.result() if shippo_future else []
-        ai            = gemini_future.result()
+        shippo_future    = executor.submit(get_shippo_rates, origin, dest, weight) if weight <= 70 else None
+        freightos_future = executor.submit(get_freightos_rates, origin, dest, weight)
+        gemini_future    = executor.submit(get_gemini_signal, origin, dest, cargo, weight, news, alerts)
+
+        shippo_rates    = shippo_future.result() if shippo_future else []
+        freightos_rates = freightos_future.result()
+        ai              = gemini_future.result()
 
     if not ai:
         return jsonify({"error": "Signal loss. Try again."}), 503
 
-    # 6. PRICE: Shippo live rates OR Gemini estimate fallback
-    if shippo_rates:
-        currency     = shippo_rates[0]["currency"]
-        price_min    = shippo_rates[0]["price"]
-        price_max    = shippo_rates[-1]["price"] if len(shippo_rates) > 1 else price_min * 1.5
+    # 6. PRICE: merge live rates from Shippo + Freightos, fallback to Gemini
+    all_live_rates = sorted(shippo_rates + freightos_rates, key=lambda x: x["price"])
+
+    if all_live_rates:
+        currency     = all_live_rates[0]["currency"]
+        price_min    = all_live_rates[0]["price"]
+        price_max    = all_live_rates[-1]["price"] if len(all_live_rates) > 1 else price_min * 1.5
         price_source = "live"
         carriers_available = [
             f"{r['carrier']} {r['service']} — {r['price']} {r['currency']}"
             + (f" ({r['days']}d)" if r.get("days") else "")
-            for r in shippo_rates
+            for r in all_live_rates[:5]
         ]
     else:
         currency  = ai.get("currency", "USD")
