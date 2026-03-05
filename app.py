@@ -511,6 +511,7 @@ def get_shippo_rates(origin, destination, weight_kg):
         logger.info(f"Shippo raw response: {str(data)[:300]}")
 
         rates = []
+        for rate in data.get("rates", []):
             if rate.get("amount") and rate.get("provider"):
                 rates.append({
                     "carrier":        rate["provider"],
