@@ -23,6 +23,8 @@ NEWS_KEY     = os.environ.get("NEWS_API_KEY")
 SHIPPO_KEY      = os.environ.get("SHIPPO_API_KEY")
 FREIGHTOS_KEY   = os.environ.get("FREIGHTOS_API_KEY")
 EASYSHIP_KEY    = os.environ.get("EASYSHIP_API_KEY")
+FEDEX_API_KEY   = os.environ.get("FEDEX_API_KEY")
+FEDEX_SECRET    = os.environ.get("FEDEX_SECRET_KEY")
 
 redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -248,6 +250,136 @@ def get_freightos_rates(origin, destination, weight_kg):
         logger.warning(f"Freightos API error: {e}")
         return []
 
+# --- FEDEX: OAUTH TOKEN (10min cache) ---
+
+def get_fedex_token():
+    """Fetches FedEx OAuth access token with 10min Redis cache."""
+    cache_key = "fedex_token"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return cached
+    except Exception:
+        pass
+
+    try:
+        resp = requests.post(
+            "https://apis-sandbox.fedex.com/oauth/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     FEDEX_API_KEY,
+                "client_secret": FEDEX_SECRET
+            },
+            timeout=8
+        )
+        token = resp.json().get("access_token")
+        if token:
+            try:
+                redis_client.set(cache_key, token, ex=540)  # 9min cache
+            except Exception:
+                pass
+            return token
+    except Exception as e:
+        logger.warning(f"FedEx token error: {e}")
+    return None
+
+# --- FEDEX: REAL RATES ---
+
+def get_fedex_rates(origin, destination, weight_kg):
+    """
+    Fetches real FedEx rates using Comprehensive Rates API.
+    Covers international shipments globally.
+    Returns list of rate options sorted by price, or empty list on failure.
+    """
+    if not FEDEX_API_KEY or not FEDEX_SECRET:
+        return []
+
+    token = get_fedex_token()
+    if not token:
+        logger.warning("FedEx: no token available")
+        return []
+
+    origin_addr = resolve_location(origin)
+    dest_addr   = resolve_location(destination)
+
+    if not origin_addr or not dest_addr:
+        logger.warning("FedEx: could not resolve addresses")
+        return []
+
+    payload = {
+        "accountNumber": {"value": "510087020"},  # FedEx sandbox test account
+        "requestedShipment": {
+            "shipper": {
+                "address": {
+                    "city":        origin_addr.get("city", origin),
+                    "postalCode":  origin_addr.get("zip", ""),
+                    "countryCode": origin_addr.get("country", "FI")
+                }
+            },
+            "recipient": {
+                "address": {
+                    "city":        dest_addr.get("city", destination),
+                    "postalCode":  dest_addr.get("zip", ""),
+                    "countryCode": dest_addr.get("country", "PH"),
+                    "residential": False
+                }
+            },
+            "pickupType": "DROPOFF_AT_FEDEX_LOCATION",
+            "rateRequestType": ["LIST", "ACCOUNT"],
+            "requestedPackageLineItems": [{
+                "weight": {
+                    "units": "KG",
+                    "value": weight_kg
+                },
+                "dimensions": {
+                    "length": 30,
+                    "width":  20,
+                    "height": 15,
+                    "units":  "CM"
+                }
+            }]
+        }
+    }
+
+    try:
+        resp = requests.post(
+            "https://apis-sandbox.fedex.com/rate/v1/rates/quotes",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json",
+                "X-locale":      "en_US"
+            },
+            json=payload,
+            timeout=15
+        )
+        data = resp.json()
+        logger.info(f"FedEx raw response: {str(data)[:300]}")
+
+        rates = []
+        for detail in data.get("output", {}).get("rateReplyDetails", []):
+            service = detail.get("serviceType", "")
+            for rated in detail.get("ratedShipmentDetails", []):
+                total = rated.get("totalNetCharge")
+                currency = rated.get("currency", "USD")
+                if total:
+                    rates.append({
+                        "carrier":  "FedEx",
+                        "service":  service,
+                        "price":    float(total),
+                        "currency": currency,
+                        "days":     detail.get("operationalDetail", {}).get("transitTime"),
+                        "mode":     "Air"
+                    })
+
+        rates.sort(key=lambda x: x["price"])
+        logger.info(f"FedEx: {len(rates)} rates for {origin} -> {destination}")
+        return rates[:5]
+
+    except Exception as e:
+        logger.warning(f"FedEx API error: {e}")
+        return []
+
 # --- EASYSHIP: REAL CARRIER RATES (EU-FIRST) ---
 
 def get_easyship_rates(origin, destination, weight_kg):
@@ -376,9 +508,9 @@ def get_shippo_rates(origin, destination, weight_kg):
             timeout=15
         )
         data = resp.json()
+        logger.info(f"Shippo raw response: {str(data)[:300]}")
 
         rates = []
-        for rate in data.get("rates", []):
             if rate.get("amount") and rate.get("provider"):
                 rates.append({
                     "carrier":        rate["provider"],
@@ -485,13 +617,15 @@ def get_signal():
     # 4. FX RATE
     fx_rate = get_live_fx_rate()
 
-    # 5. PARALLEL: Easyship + Shippo (≤70kg) + Freightos + Gemini
+    # 5. PARALLEL: FedEx + Easyship + Shippo (≤70kg) + Freightos + Gemini
     with concurrent.futures.ThreadPoolExecutor() as executor:
+        fedex_future     = executor.submit(get_fedex_rates, origin, dest, weight)
         easyship_future  = executor.submit(get_easyship_rates, origin, dest, weight)
         shippo_future    = executor.submit(get_shippo_rates, origin, dest, weight) if weight <= 70 else None
         freightos_future = executor.submit(get_freightos_rates, origin, dest, weight)
         gemini_future    = executor.submit(get_gemini_signal, origin, dest, cargo, weight, news, alerts)
 
+        fedex_rates     = fedex_future.result()
         easyship_rates  = easyship_future.result()
         shippo_rates    = shippo_future.result() if shippo_future else []
         freightos_rates = freightos_future.result()
@@ -501,7 +635,7 @@ def get_signal():
         return jsonify({"error": "Signal loss. Try again."}), 503
 
     # 6. PRICE: merge all live rates, sort by price, fallback to Gemini
-    all_live_rates = sorted(easyship_rates + shippo_rates + freightos_rates, key=lambda x: x["price"])
+    all_live_rates = sorted(fedex_rates + easyship_rates + shippo_rates + freightos_rates, key=lambda x: x["price"])
 
     if all_live_rates:
         currency     = all_live_rates[0]["currency"]
@@ -605,6 +739,7 @@ def health():
             status["services"]["supabase"] = "Connected"
         except Exception:
             status["services"]["supabase"] = "Disconnected"
+        status["services"]["fedex"]     = "Configured" if FEDEX_API_KEY else "Missing"
         status["services"]["shippo"]    = "Configured" if SHIPPO_KEY else "Missing"
         status["services"]["freightos"] = "Configured" if FREIGHTOS_KEY else "Missing"
         status["services"]["easyship"]  = "Configured" if EASYSHIP_KEY else "Missing"
