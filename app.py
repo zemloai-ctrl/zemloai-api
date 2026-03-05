@@ -20,11 +20,12 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_KEY   = os.environ.get("GEMINI_API_KEY")
 NEWS_KEY     = os.environ.get("NEWS_API_KEY")
-SHIPPO_KEY      = os.environ.get("SHIPPO_API_KEY")
-FREIGHTOS_KEY   = os.environ.get("FREIGHTOS_API_KEY")
-EASYSHIP_KEY    = os.environ.get("EASYSHIP_API_KEY")
-FEDEX_API_KEY   = os.environ.get("FEDEX_API_KEY")
-FEDEX_SECRET    = os.environ.get("FEDEX_SECRET_KEY")
+SHIPPO_KEY        = os.environ.get("SHIPPO_API_KEY")
+FREIGHTOS_KEY     = os.environ.get("FREIGHTOS_API_KEY")
+EASYSHIP_KEY      = os.environ.get("EASYSHIP_API_KEY")
+FEDEX_API_KEY     = os.environ.get("FEDEX_API_KEY")
+FEDEX_SECRET      = os.environ.get("FEDEX_SECRET_KEY")
+SHIPENGINE_KEY    = os.environ.get("SHIPENGINE_API_KEY")
 
 redis_client = Redis(url=REDIS_URL, token=REDIS_TOKEN)
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -380,6 +381,89 @@ def get_fedex_rates(origin, destination, weight_kg):
         logger.warning(f"FedEx API error: {e}")
         return []
 
+# --- SHIPENGINE: REAL CARRIER RATES (DHL, FedEx, UPS global) ---
+
+def get_shipengine_rates(origin, destination, weight_kg):
+    """
+    Fetches real rates from ShipEngine — DHL Express, FedEx, UPS globally.
+    Works from Europe. Best for international parcels.
+    Returns top 5 options sorted by price, or empty list on failure.
+    """
+    if not SHIPENGINE_KEY:
+        return []
+
+    origin_addr = resolve_location(origin)
+    dest_addr   = resolve_location(destination)
+
+    if not origin_addr or not dest_addr:
+        logger.warning("ShipEngine: could not resolve addresses")
+        return []
+
+    payload = {
+        "rate_options": {
+            "carrier_ids": []  # empty = all available carriers
+        },
+        "shipment": {
+            "ship_from": {
+                "city":       origin_addr.get("city", origin),
+                "postal_code": origin_addr.get("zip", ""),
+                "country_code": origin_addr.get("country", "FI")
+            },
+            "ship_to": {
+                "city":        dest_addr.get("city", destination),
+                "postal_code": dest_addr.get("zip", ""),
+                "country_code": dest_addr.get("country", "PH")
+            },
+            "packages": [{
+                "weight": {
+                    "value": weight_kg,
+                    "unit":  "kilogram"
+                },
+                "dimensions": {
+                    "length": 30,
+                    "width":  20,
+                    "height": 15,
+                    "unit":   "centimeter"
+                }
+            }]
+        }
+    }
+
+    try:
+        resp = requests.post(
+            "https://api.shipengine.com/v1/rates",
+            headers={
+                "API-Key":      SHIPENGINE_KEY,
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=15
+        )
+        data = resp.json()
+        logger.info(f"ShipEngine raw response: {str(data)[:300]}")
+
+        rates = []
+        for rate in data.get("rate_response", {}).get("rates", []):
+            total = rate.get("shipping_amount", {}).get("amount")
+            currency = rate.get("shipping_amount", {}).get("currency", "USD")
+            if total:
+                rates.append({
+                    "carrier":  rate.get("carrier_friendly_name", "Carrier"),
+                    "service":  rate.get("service_type", ""),
+                    "price":    float(total),
+                    "currency": currency.upper(),
+                    "days":     rate.get("delivery_days"),
+                    "mode":     "Air"
+                })
+
+        rates.sort(key=lambda x: x["price"])
+        logger.info(f"ShipEngine: {len(rates)} rates for {origin} -> {destination}")
+        return rates[:5]
+
+    except Exception as e:
+        logger.warning(f"ShipEngine API error: {e}")
+        return []
+
 # --- EASYSHIP: REAL CARRIER RATES (EU-FIRST) ---
 
 def get_easyship_rates(origin, destination, weight_kg):
@@ -618,25 +702,30 @@ def get_signal():
     # 4. FX RATE
     fx_rate = get_live_fx_rate()
 
-    # 5. PARALLEL: FedEx + Easyship + Shippo (≤70kg) + Freightos + Gemini
+    # 5. PARALLEL: ShipEngine + FedEx + Easyship + Shippo (≤70kg) + Freightos + Gemini
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        fedex_future     = executor.submit(get_fedex_rates, origin, dest, weight)
-        easyship_future  = executor.submit(get_easyship_rates, origin, dest, weight)
-        shippo_future    = executor.submit(get_shippo_rates, origin, dest, weight) if weight <= 70 else None
-        freightos_future = executor.submit(get_freightos_rates, origin, dest, weight)
-        gemini_future    = executor.submit(get_gemini_signal, origin, dest, cargo, weight, news, alerts)
+        shipengine_future = executor.submit(get_shipengine_rates, origin, dest, weight)
+        fedex_future      = executor.submit(get_fedex_rates, origin, dest, weight)
+        easyship_future   = executor.submit(get_easyship_rates, origin, dest, weight)
+        shippo_future     = executor.submit(get_shippo_rates, origin, dest, weight) if weight <= 70 else None
+        freightos_future  = executor.submit(get_freightos_rates, origin, dest, weight)
+        gemini_future     = executor.submit(get_gemini_signal, origin, dest, cargo, weight, news, alerts)
 
-        fedex_rates     = fedex_future.result()
-        easyship_rates  = easyship_future.result()
-        shippo_rates    = shippo_future.result() if shippo_future else []
-        freightos_rates = freightos_future.result()
-        ai              = gemini_future.result()
+        shipengine_rates = shipengine_future.result()
+        fedex_rates      = fedex_future.result()
+        easyship_rates   = easyship_future.result()
+        shippo_rates     = shippo_future.result() if shippo_future else []
+        freightos_rates  = freightos_future.result()
+        ai               = gemini_future.result()
 
     if not ai:
         return jsonify({"error": "Signal loss. Try again."}), 503
 
     # 6. PRICE: merge all live rates, sort by price, fallback to Gemini
-    all_live_rates = sorted(fedex_rates + easyship_rates + shippo_rates + freightos_rates, key=lambda x: x["price"])
+    all_live_rates = sorted(
+        shipengine_rates + fedex_rates + easyship_rates + shippo_rates + freightos_rates,
+        key=lambda x: x["price"]
+    )
 
     if all_live_rates:
         currency     = all_live_rates[0]["currency"]
@@ -740,10 +829,11 @@ def health():
             status["services"]["supabase"] = "Connected"
         except Exception:
             status["services"]["supabase"] = "Disconnected"
-        status["services"]["fedex"]     = "Configured" if FEDEX_API_KEY else "Missing"
-        status["services"]["shippo"]    = "Configured" if SHIPPO_KEY else "Missing"
-        status["services"]["freightos"] = "Configured" if FREIGHTOS_KEY else "Missing"
-        status["services"]["easyship"]  = "Configured" if EASYSHIP_KEY else "Missing"
+        status["services"]["shipengine"] = "Configured" if SHIPENGINE_KEY else "Missing"
+        status["services"]["fedex"]      = "Configured" if FEDEX_API_KEY else "Missing"
+        status["services"]["shippo"]     = "Configured" if SHIPPO_KEY else "Missing"
+        status["services"]["freightos"]  = "Configured" if FREIGHTOS_KEY else "Missing"
+        status["services"]["easyship"]   = "Configured" if EASYSHIP_KEY else "Missing"
         return jsonify(status)
     return jsonify({"status": "Operational", "version": "1.1"})
 
