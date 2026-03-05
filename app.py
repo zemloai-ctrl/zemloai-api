@@ -481,16 +481,22 @@ def get_shipengine_rates(origin, destination, weight_kg):
         data = resp.json()
         logger.info(f"ShipEngine raw response: {str(data)[:300]}")
 
+        # ShipEngine puts rates in 'rates' or 'invalid_rates' depending on validation
+        all_rates = (
+            data.get("rate_response", {}).get("rates", []) +
+            data.get("rate_response", {}).get("invalid_rates", [])
+        )
+
         rates = []
-        for rate in data.get("rate_response", {}).get("rates", []):
+        for rate in all_rates:
             total = rate.get("shipping_amount", {}).get("amount")
-            currency = rate.get("shipping_amount", {}).get("currency", "USD")
+            currency = rate.get("shipping_amount", {}).get("currency", "USD").upper()
             if total:
                 rates.append({
-                    "carrier":  rate.get("carrier_friendly_name", "Carrier"),
+                    "carrier":  rate.get("carrier_friendly_name") or rate.get("carrier_id", "Carrier"),
                     "service":  rate.get("service_type", ""),
                     "price":    float(total),
-                    "currency": currency.upper(),
+                    "currency": currency,
                     "days":     rate.get("delivery_days"),
                     "mode":     "Air"
                 })
