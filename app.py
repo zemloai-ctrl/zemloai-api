@@ -54,8 +54,10 @@ def get_live_fx_rate():
 # --- BUSINESS LOGIC ---
 
 def identify_agent(ua):
-    """Identifies whether the caller is a human or an AI agent."""
+    """Identifies whether the caller is a human, ghost bot, or an AI agent."""
     ua = ua.lower()
+    if 'ghostbot' in ua:
+        return 'GHOST'
     agents = {
         'gptbot': 'OPENAI', 'chatgpt': 'OPENAI',
         'claude': 'ANTHROPIC', 'anthropic': 'ANTHROPIC',
@@ -159,7 +161,7 @@ def get_signal():
     if any(s in o_c for s in SANCTIONED_COUNTRIES) or any(s in d_c for s in SANCTIONED_COUNTRIES):
         return jsonify({"hard_stop": True, "reason": "Trade sanctions apply to this route."}), 451
 
-    # 2. CACHE (5 min TTL) — currency determined by AI, so cache key without currency
+    # 2. CACHE (5 min TTL)
     cache_key = f"z1.0:{hashlib.md5(f'{o_c}{d_c}{c_c}{int(weight)}'.encode()).hexdigest()}"
     try:
         cached = redis_client.get(cache_key)
@@ -177,7 +179,6 @@ def get_signal():
     fx_rate = get_live_fx_rate()
 
     # 5. AI ENGINE (Gemini 2.5 Flash)
-    # Gemini decides currency — EUR for intra-European, USD for global
     prompt = (
         f"Return ONLY JSON: {{\"p_min\":int, \"p_max\":int, \"mode\":\"Road|Sea|Air|Rail\", "
         f"\"currency\":\"EUR|USD\", \"risk\":\"Low|Med|High\", \"actions\":[\"str\"], "
@@ -213,7 +214,6 @@ def get_signal():
     currency = ai.get("currency", "USD")
     p_min = ai['p_min']
     p_max = ai['p_max']
-    # AI returns EUR-based prices — convert to USD if needed
     if currency == "USD":
         p_min = round(p_min * fx_rate)
         p_max = round(p_max * fx_rate)
