@@ -383,7 +383,34 @@ def get_fedex_rates(origin, destination, weight_kg):
 
 # --- SHIPENGINE: REAL CARRIER RATES (DHL, FedEx, UPS global) ---
 
-def get_shipengine_rates(origin, destination, weight_kg):
+def get_shipengine_carrier_ids():
+    """Fetches available carrier IDs from ShipEngine account."""
+    cache_key = "shipengine_carriers"
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+    try:
+        resp = requests.get(
+            "https://api.shipengine.com/v1/carriers",
+            headers={"API-Key": SHIPENGINE_KEY},
+            timeout=8
+        )
+        carriers = resp.json().get("carriers", [])
+        ids = [c["carrier_id"] for c in carriers if c.get("carrier_id")]
+        logger.info(f"ShipEngine carriers: {ids}")
+        try:
+            redis_client.set(cache_key, json.dumps(ids), ex=3600)
+        except Exception:
+            pass
+        return ids
+    except Exception as e:
+        logger.warning(f"ShipEngine carrier fetch error: {e}")
+        return []
+
+
     """
     Fetches real rates from ShipEngine — DHL Express, FedEx, UPS globally.
     Works from Europe. Best for international parcels.
@@ -399,9 +426,14 @@ def get_shipengine_rates(origin, destination, weight_kg):
         logger.warning("ShipEngine: could not resolve addresses")
         return []
 
+    carrier_ids = get_shipengine_carrier_ids()
+    if not carrier_ids:
+        logger.warning("ShipEngine: no carriers available")
+        return []
+
     payload = {
         "rate_options": {
-            "carrier_ids": []  # empty = all available carriers
+            "carrier_ids": carrier_ids
         },
         "shipment": {
             "ship_from": {
